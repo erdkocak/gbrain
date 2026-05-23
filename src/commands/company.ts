@@ -9,16 +9,25 @@ import {
   type CompanyMeetingIngestInput,
   type CompanyMeetingIngestResult,
 } from '../core/company-ingest.ts';
+import {
+  CompanyExtractError,
+  extractCompanyMemory,
+  type CompanyExtractInput,
+  type CompanyExtractionResult,
+} from '../core/company-extract.ts';
 import { isAvailable } from '../core/ai/gateway.ts';
 
 const HELP = `Usage:
   gbrain company ingest meeting <transcript.txt|.md|.markdown> [options]
   gbrain company ingest doc <document.txt|.md|.markdown> [options]
+  gbrain company extract all [options]
+  gbrain company extract <meeting-or-doc-slug> [more slugs...] [options]
 
-Stage 1C local/manual company ingestion for a trusted workspace pilot.
-Writes meeting, doc, and evidence pages into the company source with file
-provenance. This command does not start live integrations, cron, webhooks,
-background connectors, or hosted write access.
+Stage 1C/1D local/manual company memory for a trusted workspace pilot.
+Ingest writes meeting, doc, and evidence pages with file provenance. Extract
+derives decisions, commitments, and follow-up action candidates from trusted
+meeting/doc pages. These commands do not start live integrations, cron,
+webhooks, background connectors, or hosted write access.
 
 Meeting options:
   --title TITLE          Meeting title
@@ -33,6 +42,9 @@ Doc options:
   --date YYYY-MM-DD      Capture/evidence date (default: today)
   --slug SLUG            Override docs/title slug
   --project NAME         Repeatable; comma-separated values also accepted
+
+Extract options:
+  --limit N              Max meeting/doc pages for "extract all" (1-1000, default: 100)
 
 Shared options:
   --source-id ID         Override company primary source (default: company)
@@ -52,6 +64,7 @@ interface ParsedBase {
 type Parsed =
   | ({ kind: 'meeting'; input: CompanyMeetingIngestInput; json: boolean })
   | ({ kind: 'doc'; input: CompanyDocIngestInput; json: boolean })
+  | ({ kind: 'extract'; input: CompanyExtractInput; json: boolean })
   | { help: true };
 
 export async function runCompany(engine: BrainEngine | null, args: string[]): Promise<void> {
@@ -70,12 +83,15 @@ export async function runCompany(engine: BrainEngine | null, args: string[]): Pr
     if (parsed.kind === 'meeting') {
       const result = await ingestCompanyMeeting(engine, { ...parsed.input, noEmbed });
       printMeetingResult(result, parsed.json);
-    } else {
+    } else if (parsed.kind === 'doc') {
       const result = await ingestCompanyDoc(engine, { ...parsed.input, noEmbed });
       printDocResult(result, parsed.json);
+    } else {
+      const result = await extractCompanyMemory(engine, { ...parsed.input, noEmbed });
+      printExtractResult(result, parsed.json);
     }
   } catch (e) {
-    if (e instanceof CompanyIngestError) {
+    if (e instanceof CompanyIngestError || e instanceof CompanyExtractError) {
       console.error(`gbrain company: ${e.message}`);
       process.exit(1);
     }
@@ -88,8 +104,13 @@ function parseArgs(args: string[]): Parsed {
     return { help: true };
   }
   const [group, subcommand, ...rest] = args;
+  if (group === 'extract') {
+    const parsed = parseExtract([subcommand, ...rest].filter((v): v is string => typeof v === 'string'));
+    return { kind: 'extract', input: parsed.input, json: parsed.json };
+  }
+
   if (group !== 'ingest' || (subcommand !== 'meeting' && subcommand !== 'doc')) {
-    console.error('Usage: gbrain company ingest <meeting|doc> ...');
+    console.error('Usage: gbrain company <ingest|extract> ...');
     console.error('Run `gbrain company --help` for details.');
     process.exit(2);
   }
@@ -188,6 +209,50 @@ function parseDoc(args: string[]): { input: CompanyDocIngestInput; json: boolean
   };
 }
 
+function parseExtract(args: string[]): { input: CompanyExtractInput; json: boolean } {
+  const base = parseBase(args);
+  const positional: string[] = [];
+  let limit: number | undefined;
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    const consumed = consumeBaseFlag(args, i);
+    if (consumed !== null) { i += consumed; continue; }
+    if (a === '--limit') {
+      const value = requireValue(args, ++i, a);
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isInteger(parsed) || String(parsed) !== value || parsed < 1 || parsed > 1000) {
+        console.error('gbrain company: --limit must be an integer from 1 to 1000');
+        process.exit(2);
+      }
+      limit = parsed;
+      continue;
+    }
+    if (a.startsWith('--')) unknownFlag(a);
+    positional.push(a);
+  }
+
+  if (positional.length === 0) {
+    console.error('Usage: gbrain company extract all|<meeting-or-doc-slug> [more slugs...] [options]');
+    process.exit(2);
+  }
+  if (positional.includes('all') && positional.length > 1) {
+    console.error('gbrain company: "extract all" cannot be combined with explicit slugs');
+    process.exit(2);
+  }
+
+  return {
+    json: base.json,
+    input: {
+      slugs: positional[0] === 'all' ? undefined : positional,
+      limit,
+      sourceId: base.sourceId,
+      createdBy: base.createdBy,
+      noEmbed: base.noEmbed,
+    },
+  };
+}
+
 function parseBase(args: string[]): ParsedBase {
   const base: ParsedBase = {
     json: false,
@@ -257,4 +322,30 @@ function printDocResult(result: CompanyDocIngestResult, json: boolean): void {
   console.log(`  doc:      ${result.doc.slug} (${result.doc.status})`);
   console.log(`  evidence: ${result.evidence.slug} (${result.evidence.status})`);
   console.log('  note:     local/manual ingest only; no live integrations or hosted writes enabled');
+}
+
+function printExtractResult(result: CompanyExtractionResult, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log('company extract complete (trusted workspace pilot):');
+  console.log(`  source:      ${result.source_id}`);
+  console.log(`  inputs:      ${result.inputs.length}`);
+  console.log(`  decisions:   ${result.decisions.length}`);
+  for (const page of result.decisions) {
+    console.log(`    - ${page.slug} (${page.status})`);
+  }
+  console.log(`  commitments: ${result.commitments.length}`);
+  for (const page of result.commitments) {
+    console.log(`    - ${page.slug} (${page.status})`);
+  }
+  console.log(`  actions:     ${result.actions.length}`);
+  for (const page of result.actions) {
+    console.log(`    - ${page.slug} (${page.status})`);
+  }
+  if (result.skipped.length > 0) {
+    console.log(`  skipped:     ${result.skipped.length}`);
+  }
+  console.log('  note:        local deterministic extraction only; no policy enforcement, hosted writes, or external execution enabled');
 }

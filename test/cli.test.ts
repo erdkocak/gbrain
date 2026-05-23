@@ -207,8 +207,9 @@ describe('CLI dispatch integration', () => {
       const exitCode = await proc.exited;
       expect(stdout).toContain('Usage:');
       expect(stdout).toContain('gbrain company ingest meeting');
+      expect(stdout).toContain('gbrain company extract');
       expect(stdout).toContain('trusted workspace pilot');
-      expect(stdout).toContain('does not start live integrations');
+      expect(stdout).toContain('do not start live integrations');
       expect(existsSync(join(home, '.gbrain', 'config.json'))).toBe(false);
       expect(exitCode).toBe(0);
     } finally {
