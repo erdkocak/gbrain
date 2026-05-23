@@ -50,7 +50,18 @@ describe('gbrain init --company', () => {
       expect(parsed.status).toBe('success');
       expect(parsed.company.mode).toBe('trusted_workspace');
       expect(parsed.company.policy_enforcement).toBe('deferred');
-      expect(parsed.company.hosted_skill_exposure).toBe('not_enabled');
+      expect(parsed.company.hosted_skill_exposure).toBe('deny_by_default_trusted_pilot');
+      expect(parsed.company.hosted_surface.mode).toBe('trusted_pilot_clients_only');
+      expect(parsed.company.hosted_surface.skill_gate.default).toBe('deny');
+      expect(parsed.company.hosted_surface.skill_gate.allowlist.map((entry: any) => entry.name)).toEqual([
+        'query',
+        'briefing',
+        'daily-task-prep',
+        'ask-user',
+        'repo-architecture',
+        'brain-taxonomist',
+      ]);
+      expect(parsed.company.hosted_surface.skill_gate.advisory_only).toEqual(['brain-taxonomist']);
       expect(parsed.company.metadata_placeholders.visibility_policy_id).toBeNull();
       expect(parsed.company.schema_pack).toBe('gbrain-company');
       expect(parsed.company.layout.path_defaults.map((entry: any) => entry.object_type)).toEqual([
@@ -72,6 +83,9 @@ describe('gbrain init --company', () => {
       expect(cfg.company.layout.templates.decision.frontmatter.type).toBe('decision');
       expect(cfg.company.policy_enforcement).toBe('deferred');
       expect(cfg.company.security_claim).toBe('none_trusted_workspace_only');
+      expect(cfg.company.hosted_skill_exposure).toBe('deny_by_default_trusted_pilot');
+      expect(cfg.company.hosted_surface.disabled_surfaces).toContain('direct_db_credentials_for_normal_secure_users');
+      expect(cfg.company.hosted_surface.disabled_surfaces).toContain('follow_up_external_execution');
 
       const mode = await runCli(['config', 'get', 'company.mode'], home);
       expect(mode.exitCode).toBe(0);
@@ -84,6 +98,14 @@ describe('gbrain init --company', () => {
       const schemaPack = await runCli(['config', 'get', 'schema_pack'], home);
       expect(schemaPack.exitCode).toBe(0);
       expect(schemaPack.stdout.trim()).toBe('gbrain-company');
+
+      const hostedSurface = await runCli(['config', 'get', 'company.hosted_surface'], home);
+      expect(hostedSurface.exitCode).toBe(0);
+      expect(JSON.parse(hostedSurface.stdout).skill_gate.default).toBe('deny');
+
+      const hostedSurfaceCommand = await runCli(['company', 'hosted-surface', '--json'], home);
+      expect(hostedSurfaceCommand.exitCode).toBe(0);
+      expect(JSON.parse(hostedSurfaceCommand.stdout).skill_gate.allowlist.map((entry: any) => entry.name)).toContain('query');
 
       const layout = await runCli(['config', 'get', 'company.layout'], home);
       expect(layout.exitCode).toBe(0);

@@ -798,7 +798,8 @@ function printCompanyModeSummary(config: CompanyModeConfig): void {
     if (objectTypes) console.log(`  Layout defaults: ${objectTypes}`);
   }
   console.log('  Enforcement deferred: no ACL, RLS, or secure multi-user claim.');
-  console.log('  Hosted skill exposure was not enabled by init --company.');
+  console.log('  Hosted skill exposure: deny-by-default trusted pilot allowlist only.');
+  console.log('  Hosted writes and external follow-up execution remain disabled.');
 }
 
 async function applyCompanyModeAndLayout(engine: Awaited<ReturnType<typeof createEngine>>): Promise<CompanyModeConfig> {

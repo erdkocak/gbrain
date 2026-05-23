@@ -1,10 +1,17 @@
 import type { BrainEngine } from './engine.ts';
+import {
+  applyCompanyHostedSurface,
+  buildCompanyHostedSurfaceConfig,
+  COMPANY_HOSTED_SKILL_EXPOSURE,
+  type CompanyHostedSurfaceConfig,
+} from './company-hosted-surface.ts';
+
+export { COMPANY_HOSTED_SKILL_EXPOSURE } from './company-hosted-surface.ts';
 
 export const COMPANY_PRIMARY_SOURCE_ID = 'company';
 export const COMPANY_MODE_KIND = 'company';
 export const COMPANY_TRUST_MODE = 'trusted_workspace';
 export const COMPANY_POLICY_ENFORCEMENT = 'deferred';
-export const COMPANY_HOSTED_SKILL_EXPOSURE = 'not_enabled';
 
 export const COMPANY_METADATA_PLACEHOLDER_FIELDS = [
   'visibility_policy_id',
@@ -31,6 +38,7 @@ export interface CompanyModeConfig {
     evidence_refs: unknown[];
   };
   hosted_skill_exposure: typeof COMPANY_HOSTED_SKILL_EXPOSURE;
+  hosted_surface: CompanyHostedSurfaceConfig;
   layout?: unknown;
 }
 
@@ -51,6 +59,7 @@ export function buildCompanyModeConfig(
       evidence_refs: [],
     },
     hosted_skill_exposure: COMPANY_HOSTED_SKILL_EXPOSURE,
+    hosted_surface: buildCompanyHostedSurfaceConfig(),
   };
 }
 
@@ -65,6 +74,8 @@ export async function applyCompanyModeSkeleton(
     trusted_workspace: true,
     policy_enforcement: COMPANY_POLICY_ENFORCEMENT,
     metadata_placeholders: COMPANY_METADATA_PLACEHOLDER_FIELDS,
+    hosted_skill_exposure: COMPANY_HOSTED_SKILL_EXPOSURE,
+    hosted_surface: config.hosted_surface,
   };
 
   await engine.executeRaw(
@@ -89,7 +100,7 @@ export async function applyCompanyModeSkeleton(
     'company.metadata_placeholders',
     JSON.stringify(COMPANY_METADATA_PLACEHOLDER_FIELDS),
   );
-  await engine.setConfig('company.hosted_skill_exposure', COMPANY_HOSTED_SKILL_EXPOSURE);
+  await applyCompanyHostedSurface(engine, primarySourceId, config.hosted_surface);
   await engine.setConfig('sources.default', primarySourceId);
 
   return config;

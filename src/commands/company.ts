@@ -21,6 +21,16 @@ import {
   type CompanyRetrieveInput,
   type CompanyRetrieveResult,
 } from '../core/company-retrieve.ts';
+import {
+  draftCompanyFollowUp,
+  CompanyFollowUpError,
+  type CompanyFollowUpDraftResult,
+  type CompanyFollowUpInput,
+} from '../core/company-followup.ts';
+import {
+  buildCompanyHostedSurfaceConfig,
+  type CompanyHostedSurfaceConfig,
+} from '../core/company-hosted-surface.ts';
 import { isAvailable } from '../core/ai/gateway.ts';
 
 const HELP = `Usage:
@@ -30,14 +40,20 @@ const HELP = `Usage:
   gbrain company extract <meeting-or-doc-slug> [more slugs...] [options]
   gbrain company query <question> [options]
   gbrain company decisions [question terms] [options]
+  gbrain company follow-up draft [options]
+  gbrain company hosted-surface [options]
 
-Stage 1C-1E local/manual company memory for a trusted workspace pilot.
+Stage 1C-1F local/manual company memory for a trusted workspace pilot.
 Ingest writes meeting, doc, and evidence pages with file provenance. Extract
 derives decisions, commitments, and follow-up action candidates from trusted
 meeting/doc pages. Query answers from company layout pages with citations to
-meetings, docs, and evidence. These commands do not start live integrations,
-cron, webhooks, background connectors, hosted write access, query cache,
-hot-memory, code-intelligence reads, analytics reads, or dream-cycle outputs.
+meetings, docs, and evidence. Follow-up drafting produces local drafts only;
+it does not send email, post messages, create tickets, run webhooks, invoke
+subagents, or execute external actions. Hosted skill exposure is deny-by-
+default for trusted pilot clients only.
+These commands do not start live integrations, cron, webhooks, background
+connectors, hosted write access, query cache, hot-memory, code-intelligence
+reads, analytics reads, or dream-cycle outputs.
 
 Meeting options:
   --title TITLE          Meeting title
@@ -59,6 +75,12 @@ Extract options:
 Query options:
   --project NAME         Restrict retrieval to decisions tagged with project
   --limit N              Max decision results (1-100, default: 10)
+
+Follow-up options:
+  --owner NAME           Restrict drafts to one owner
+  --project NAME         Restrict drafts to one project
+  --limit N              Max follow-up drafts (1-100, default: 10)
+  --include-closed       Include completed/closed action and commitment pages
 
 Common options:
   --source-id ID         Override company primary source (default: company)
@@ -82,6 +104,8 @@ type Parsed =
   | ({ kind: 'doc'; input: CompanyDocIngestInput; json: boolean })
   | ({ kind: 'extract'; input: CompanyExtractInput; json: boolean })
   | ({ kind: 'retrieve'; input: CompanyRetrieveInput; json: boolean })
+  | ({ kind: 'followup'; input: CompanyFollowUpInput; json: boolean })
+  | ({ kind: 'hosted-surface'; json: boolean })
   | { help: true };
 
 export async function runCompany(engine: BrainEngine | null, args: string[]): Promise<void> {
@@ -108,12 +132,23 @@ export async function runCompany(engine: BrainEngine | null, args: string[]): Pr
       const noEmbed = parsed.input.noEmbed ?? !isAvailable('embedding');
       const result = await extractCompanyMemory(engine, { ...parsed.input, noEmbed });
       printExtractResult(result, parsed.json);
-    } else {
+    } else if (parsed.kind === 'retrieve') {
       const result = await answerCompanyQuestion(engine, parsed.input);
       printRetrieveResult(result, parsed.json);
+    } else if (parsed.kind === 'followup') {
+      const result = await draftCompanyFollowUp(engine, parsed.input);
+      printFollowUpResult(result, parsed.json);
+    } else {
+      const result = buildCompanyHostedSurfaceConfig();
+      printHostedSurfaceResult(result, parsed.json);
     }
   } catch (e) {
-    if (e instanceof CompanyIngestError || e instanceof CompanyExtractError || e instanceof CompanyRetrieveError) {
+    if (
+      e instanceof CompanyIngestError
+      || e instanceof CompanyExtractError
+      || e instanceof CompanyRetrieveError
+      || e instanceof CompanyFollowUpError
+    ) {
       console.error(`gbrain company: ${e.message}`);
       process.exit(1);
     }
@@ -134,9 +169,25 @@ function parseArgs(args: string[]): Parsed {
     const parsed = parseRetrieve(group, [subcommand, ...rest].filter((v): v is string => typeof v === 'string'));
     return { kind: 'retrieve', input: parsed.input, json: parsed.json };
   }
+  if (group === 'follow-up' || group === 'followup') {
+    const parsed = parseFollowUp([subcommand, ...rest].filter((v): v is string => typeof v === 'string'));
+    return { kind: 'followup', input: parsed.input, json: parsed.json };
+  }
+  if (group === 'hosted-surface' || group === 'surface') {
+    const surfaceArgs = [subcommand, ...rest].filter((v): v is string => typeof v === 'string');
+    const base = parseBase(surfaceArgs);
+    for (const arg of surfaceArgs) {
+      if (arg.startsWith('--') && arg !== '--json') unknownFlag(arg);
+      if (!arg.startsWith('--')) {
+        console.error('Usage: gbrain company hosted-surface [--json]');
+        process.exit(2);
+      }
+    }
+    return { kind: 'hosted-surface', json: base.json };
+  }
 
   if (group !== 'ingest' || (subcommand !== 'meeting' && subcommand !== 'doc')) {
-    console.error('Usage: gbrain company <ingest|extract|query|decisions> ...');
+    console.error('Usage: gbrain company <ingest|extract|query|decisions|follow-up|hosted-surface> ...');
     console.error('Run `gbrain company --help` for details.');
     process.exit(2);
   }
@@ -322,6 +373,57 @@ function parseRetrieve(group: string, args: string[]): { input: CompanyRetrieveI
   };
 }
 
+function parseFollowUp(args: string[]): { input: CompanyFollowUpInput; json: boolean } {
+  if (args[0] !== 'draft') {
+    console.error('Usage: gbrain company follow-up draft [options]');
+    process.exit(2);
+  }
+  const base = parseBase(args);
+  const positional: string[] = [];
+  let limit: number | undefined;
+  let project: string | undefined;
+  let owner: string | undefined;
+  let includeClosed = false;
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    const consumed = consumeBaseFlag(args, i);
+    if (consumed !== null) { i += consumed; continue; }
+    if (a === 'draft') continue;
+    if (a === '--limit') {
+      const value = requireValue(args, ++i, a);
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isInteger(parsed) || String(parsed) !== value || parsed < 1 || parsed > 100) {
+        console.error('gbrain company: follow-up --limit must be an integer from 1 to 100');
+        process.exit(2);
+      }
+      limit = parsed;
+      continue;
+    }
+    if (a === '--project') { project = requireValue(args, ++i, a); continue; }
+    if (a === '--owner') { owner = requireValue(args, ++i, a); continue; }
+    if (a === '--include-closed') { includeClosed = true; continue; }
+    if (a.startsWith('--')) unknownFlag(a);
+    positional.push(a);
+  }
+
+  if (positional.length > 0) {
+    console.error('Usage: gbrain company follow-up draft [options]');
+    process.exit(2);
+  }
+
+  return {
+    json: base.json,
+    input: {
+      sourceId: base.sourceId,
+      owner,
+      project,
+      limit,
+      includeClosed,
+    },
+  };
+}
+
 function parseBase(args: string[]): ParsedBase {
   const base: ParsedBase = {
     json: false,
@@ -435,4 +537,44 @@ function printRetrieveResult(result: CompanyRetrieveResult, json: boolean): void
   }
   console.log('');
   console.log('note: local trusted-workspace retrieval only; query cache, hot-memory, code-intelligence, analytics, and dream-cycle outputs are not used');
+}
+
+function printFollowUpResult(result: CompanyFollowUpDraftResult, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log('company follow-up draft (trusted workspace pilot):');
+  console.log(result.draft_text);
+  console.log('');
+  console.log(`drafts: ${result.drafts.length}`);
+  if (result.citations.length > 0) {
+    console.log('Citations:');
+    for (const citation of result.citations) {
+      console.log(`  - ${citation.role}: ${citation.slug} (${citation.page_type})`);
+    }
+  }
+  console.log('');
+  console.log('note: draft-only local output; email, Slack, tickets, calendars, webhooks, external APIs, shell jobs, and subagents are disabled');
+}
+
+function printHostedSurfaceResult(result: CompanyHostedSurfaceConfig, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log('company hosted surface (trusted workspace pilot):');
+  console.log(`  mode:      ${result.mode}`);
+  console.log(`  security:  ${result.security_claim}`);
+  console.log(`  skillgate: ${result.skill_gate.default} by default`);
+  console.log('  allowlist:');
+  for (const rule of result.skill_gate.allowlist) {
+    const suffix = rule.advisory_only ? ' (advisory only)' : '';
+    console.log(`    - ${rule.name}${suffix}`);
+  }
+  console.log('  disabled:');
+  for (const surface of result.disabled_surfaces) {
+    console.log(`    - ${surface}`);
+  }
+  console.log('  note: trusted pilot clients only; normal secure users still need Stage 3 policy enforcement');
 }

@@ -209,8 +209,12 @@ describe('CLI dispatch integration', () => {
       expect(stdout).toContain('gbrain company ingest meeting');
       expect(stdout).toContain('gbrain company extract');
       expect(stdout).toContain('gbrain company query');
+      expect(stdout).toContain('gbrain company follow-up draft');
+      expect(stdout).toContain('gbrain company hosted-surface');
       expect(stdout).toContain('trusted workspace pilot');
       expect(stdout).toContain('do not start live integrations');
+      expect(stdout).toContain('does not send email');
+      expect(stdout).toContain('deny-by-');
       expect(stdout).toContain('query cache');
       expect(existsSync(join(home, '.gbrain', 'config.json'))).toBe(false);
       expect(exitCode).toBe(0);
