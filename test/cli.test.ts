@@ -194,6 +194,28 @@ describe('CLI dispatch integration', () => {
     }
   });
 
+  test('company --help describes local manual ingestion without DB connection', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-help-'));
+    try {
+      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'company', '--help'], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      const stdout = await new Response(proc.stdout).text();
+      const exitCode = await proc.exited;
+      expect(stdout).toContain('Usage:');
+      expect(stdout).toContain('gbrain company ingest meeting');
+      expect(stdout).toContain('trusted workspace pilot');
+      expect(stdout).toContain('does not start live integrations');
+      expect(existsSync(join(home, '.gbrain', 'config.json'))).toBe(false);
+      expect(exitCode).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('--help prints global help', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--help'], {
       cwd: repoRoot,

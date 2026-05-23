@@ -27,7 +27,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture']);
+const CLI_ONLY = new Set(['init', 'reinit-pglite', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'company']);
 // CLI-only commands whose handlers print their own --help text. These are
 // excluded from the generic short-circuit so detailed per-command and
 // per-subcommand usage stays reachable.
@@ -46,6 +46,7 @@ const CLI_ONLY_SELF_HELP = new Set([
   // runCapture saw --help. brainstorm + lsd were already in the set;
   // capture was the holdout.
   'capture',
+  'company',
   // v0.37 fix wave (Lane D.4 + CDX2-12): sync's --no-embed flag was
   // unreachable via help because the dispatcher's generic CLI-only
   // short-circuit fired before runSync could print its own usage block.
@@ -675,7 +676,7 @@ const THIN_CLIENT_REFUSED_COMMANDS = new Set([
   'sync', 'embed', 'extract', 'migrate', 'apply-migrations',
   'repair-jsonb', 'orphans', 'integrity', 'serve',
   // v0.31.1 (CDX-2 op coverage matrix): more local-only commands
-  'dream', 'transcripts', 'storage',
+  'dream', 'transcripts', 'storage', 'company',
   // v0.31.1 CDX-2 audit: takes/sources have multiple subcommands; some
   // (takes_list/takes_search, sources_list/sources_status) have MCP
   // equivalents and others are file-system bound (takes mutate commands
@@ -714,6 +715,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   dream: 'dream runs the autopilot cycle on the host. `gbrain remote ping` queues one. (Native `gbrain dream` thin-client routing planned for v0.31.2.)',
   orphans: "orphans needs the host's brain. Run on the host or use the `find_orphans` MCP tool from your agent.",
   transcripts: 'transcripts is server-private (raw chat exports stay on the host). Read transcripts on the host machine.',
+  company: 'company ingestion is local/manual for the trusted-workspace pilot. Run it on the host; hosted writes stay disabled in Stage 1C.',
   storage: 'storage operates on the local repo on disk. Run on the host.',
   takes: 'takes mutate subcommands edit local .md files; routing the read subcommands lands in v0.31.x. For now: use `takes_list` and `takes_search` MCP tools from your agent, or run on the host.',
   sources: 'sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.',
@@ -1098,6 +1100,12 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  if (command === 'company' && (args.includes('--help') || args.includes('-h'))) {
+    const { runCompany } = await import('./commands/company.ts');
+    await runCompany(null, args);
+    return;
+  }
+
   // All remaining CLI-only commands need a DB connection
   const engine = await connectEngine();
   try {
@@ -1105,6 +1113,11 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'import': {
         const { runImport } = await import('./commands/import.ts');
         await runImport(engine, args);
+        break;
+      }
+      case 'company': {
+        const { runCompany } = await import('./commands/company.ts');
+        await runCompany(engine, args);
         break;
       }
       case 'export': {
@@ -1642,6 +1655,9 @@ SEARCH
 
 IMPORT/EXPORT
   import <dir> [--no-embed]          Import markdown directory
+  company ingest meeting <file>      Stage 1C local/manual company transcript ingest
+        [--doc PATH] [--no-embed]    Trusted workspace only; no live connectors
+  company ingest doc <file>          Stage 1C local/manual linked-doc ingest
   sync [--repo <path>] [flags]       Git-to-brain incremental sync
   sync --watch [--interval N]        Continuous sync (loops until stopped)
   sync --install-cron                Install persistent sync daemon
