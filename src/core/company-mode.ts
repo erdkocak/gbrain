@@ -21,6 +21,7 @@ export interface CompanyModeConfig {
   mode: typeof COMPANY_TRUST_MODE;
   trusted_workspace: true;
   primary_source_id: string;
+  schema_pack?: string;
   policy_enforcement: typeof COMPANY_POLICY_ENFORCEMENT;
   security_claim: 'none_trusted_workspace_only';
   metadata_placeholders: {
@@ -30,6 +31,7 @@ export interface CompanyModeConfig {
     evidence_refs: unknown[];
   };
   hosted_skill_exposure: typeof COMPANY_HOSTED_SKILL_EXPOSURE;
+  layout?: unknown;
 }
 
 export function buildCompanyModeConfig(

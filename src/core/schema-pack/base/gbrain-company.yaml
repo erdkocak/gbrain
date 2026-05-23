@@ -1,0 +1,142 @@
+# gbrain-company - trusted workspace company brain pack.
+#
+# Stage 1 company mode is a useful single-workspace pilot only. This pack
+# describes default company memory shape for filing and type inference; it
+# does not add ACLs, RLS, object-policy enforcement, or secure multi-user
+# behavior.
+
+api_version: gbrain-schema-pack-v1
+name: gbrain-company
+version: 1.0.0
+gbrain_min_version: 0.40.2.0
+extends: gbrain-base
+description: Trusted-workspace company brain layout for meetings, documents, decisions, commitments, evidence, people, projects, and actions.
+
+page_types:
+  - name: meeting
+    primitive: temporal
+    path_prefixes:
+      - meetings/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+  - name: doc
+    primitive: media
+    path_prefixes:
+      - docs/
+      - documents/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+  - name: decision
+    primitive: temporal
+    path_prefixes:
+      - decisions/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+  - name: commitment
+    primitive: temporal
+    path_prefixes:
+      - commitments/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+  - name: evidence
+    primitive: media
+    path_prefixes:
+      - evidence/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+  - name: person
+    primitive: entity
+    path_prefixes:
+      - people/
+      - person/
+    aliases: []
+    extractable: false
+    expert_routing: true
+
+  - name: project
+    primitive: concept
+    path_prefixes:
+      - projects/
+      - project/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+  - name: action
+    primitive: temporal
+    path_prefixes:
+      - actions/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+link_types: []
+
+takes_kinds:
+  - fact
+  - take
+  - bet
+  - hunch
+
+borrow_from: []
+frontmatter_links: []
+enrichable_types: []
+
+filing_rules:
+  - kind: meeting
+    directory: meetings/
+    examples:
+      - meetings/2026-05-23-product-sync
+    description: Meeting notes and transcripts.
+
+  - kind: doc
+    directory: docs/
+    examples:
+      - docs/prd-search-refresh
+    description: Company documents, memos, PRDs, and linked references.
+
+  - kind: decision
+    directory: decisions/
+    examples:
+      - decisions/2026-05-23-search-refresh-scope
+    description: Decisions with context, owner, and supporting evidence.
+
+  - kind: commitment
+    directory: commitments/
+    examples:
+      - commitments/2026-05-23-alice-example-search-refresh
+    description: Commitments with owner, due date, status, and source evidence.
+
+  - kind: evidence
+    directory: evidence/
+    examples:
+      - evidence/2026-05-23-product-sync-transcript
+    description: Source artifacts and cited evidence.
+
+  - kind: person
+    directory: people/
+    examples:
+      - people/alice-example
+    description: People and roles in the trusted workspace.
+
+  - kind: project
+    directory: projects/
+    examples:
+      - projects/search-refresh
+    description: Projects, workstreams, and status rollups.
+
+  - kind: action
+    directory: actions/
+    examples:
+      - actions/2026-05-23-alice-example-send-follow-up
+    description: Follow-up actions and tasks.

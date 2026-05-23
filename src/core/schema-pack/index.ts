@@ -79,10 +79,13 @@ export {
 } from './registry.ts';
 
 export {
+  BUNDLED_SCHEMA_PACKS,
+  isBundledSchemaPackName,
   loadActivePack,
   resolveActivePackNameOnly,
   __setPackLocatorForTests,
   _resetPackLocatorForTests,
+  type BundledSchemaPackName,
   type LoadActivePackInput,
   type PackLocator,
 } from './load-active.ts';

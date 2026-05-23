@@ -10,6 +10,7 @@ import { saveConfig, loadConfig, loadConfigFileOnly, toEngineConfig, gbrainPath,
 import { createEngine } from '../core/engine-factory.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core/remote-mcp-probe.ts';
 import { applyCompanyModeSkeleton, type CompanyModeConfig } from '../core/company-mode.ts';
+import { applyCompanyLayout } from '../core/company-layout.ts';
 
 export async function runInit(args: string[]) {
   const isSupabase = args.includes('--supabase');
@@ -791,8 +792,23 @@ function printCompanyModeSummary(config: CompanyModeConfig): void {
   console.log('Company mode: trusted workspace pilot.');
   console.log(`  Primary source: ${config.primary_source_id}`);
   console.log(`  Metadata placeholders reserved: ${Object.keys(config.metadata_placeholders).join(', ')}`);
+  if (config.layout && typeof config.layout === 'object') {
+    const layout = config.layout as { path_defaults?: Array<{ object_type: string }> };
+    const objectTypes = layout.path_defaults?.map((entry) => entry.object_type).join(', ');
+    if (objectTypes) console.log(`  Layout defaults: ${objectTypes}`);
+  }
   console.log('  Enforcement deferred: no ACL, RLS, or secure multi-user claim.');
   console.log('  Hosted skill exposure was not enabled by init --company.');
+}
+
+async function applyCompanyModeAndLayout(engine: Awaited<ReturnType<typeof createEngine>>): Promise<CompanyModeConfig> {
+  const companyConfig = await applyCompanyModeSkeleton(engine);
+  const layout = await applyCompanyLayout(engine);
+  return {
+    ...companyConfig,
+    schema_pack: layout.schema_pack,
+    layout,
+  };
 }
 
 async function initPGLite(opts: {
@@ -930,7 +946,7 @@ async function initPGLite(opts: {
     }
 
     const companyConfig = opts.companyMode
-      ? await applyCompanyModeSkeleton(engine)
+      ? await applyCompanyModeAndLayout(engine)
       : undefined;
 
     // v0.37.10.0 T7 (D9) + v0.37.11.0 Lane B.4: atomic embedding-config
@@ -954,6 +970,7 @@ async function initPGLite(opts: {
           : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
+      ...(companyConfig?.schema_pack ? { schema_pack: companyConfig.schema_pack } : {}),
       ...(companyConfig ? { company: companyConfig } : {}),
     };
     saveConfig(config);
@@ -1170,7 +1187,7 @@ async function initPostgres(opts: {
     }
 
     const companyConfig = opts.companyMode
-      ? await applyCompanyModeSkeleton(engine)
+      ? await applyCompanyModeAndLayout(engine)
       : undefined;
 
     // v0.37.10.0 T7 (D9) + v0.37.11.0 Lane B.4 (Postgres mirror): atomic
@@ -1190,6 +1207,7 @@ async function initPostgres(opts: {
           : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
+      ...(companyConfig?.schema_pack ? { schema_pack: companyConfig.schema_pack } : {}),
       ...(companyConfig ? { company: companyConfig } : {}),
     };
     saveConfig(config);

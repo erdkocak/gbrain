@@ -37,6 +37,13 @@ import {
   type ResolutionResult,
 } from './registry.ts';
 
+export const BUNDLED_SCHEMA_PACKS = ['gbrain-base', 'gbrain-recommended', 'gbrain-company'] as const;
+export type BundledSchemaPackName = typeof BUNDLED_SCHEMA_PACKS[number];
+
+export function isBundledSchemaPackName(name: string): name is BundledSchemaPackName {
+  return (BUNDLED_SCHEMA_PACKS as readonly string[]).includes(name);
+}
+
 /**
  * Inputs the caller (operations.ts handler / engine query path) provides.
  * Most callers only need `cfg` + `remote`; thin-client + source-aware
@@ -84,18 +91,17 @@ export function _resetPackLocatorForTests(): void {
 
 /**
  * Default pack locator: maps a pack name to its filesystem path.
- *   'gbrain-base' → bundled src/core/schema-pack/base/gbrain-base.yaml
+ *   bundled names → bundled src/core/schema-pack/base/<name>.yaml
  *   other         → ~/.gbrain/schema-packs/<name>/pack.yaml or pack.json
  *
  * Returns null when the pack is not found. Callers handle null by
  * throwing UnknownPackError with a paste-ready install hint.
  */
 function defaultPackLocator(name: string): string | null {
-  // v0.39 T8 — bundled packs registry. gbrain-base + gbrain-recommended
-  // ship in src/core/schema-pack/base/. Add a new entry here to bundle
-  // additional canonical packs.
-  const BUNDLED: ReadonlyArray<string> = ['gbrain-base', 'gbrain-recommended'];
-  if (BUNDLED.includes(name)) {
+  // v0.39 T8 — bundled packs registry. Canonical packs ship in
+  // src/core/schema-pack/base/. Add a new entry here to bundle additional
+  // canonical packs.
+  if (isBundledSchemaPackName(name)) {
     // Resolve bundled YAML relative to this source file. Works in both
     // direct-bun execution and bun --compile binaries.
     const here = dirname(fileURLToPath(import.meta.url));

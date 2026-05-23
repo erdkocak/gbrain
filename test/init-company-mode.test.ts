@@ -52,10 +52,24 @@ describe('gbrain init --company', () => {
       expect(parsed.company.policy_enforcement).toBe('deferred');
       expect(parsed.company.hosted_skill_exposure).toBe('not_enabled');
       expect(parsed.company.metadata_placeholders.visibility_policy_id).toBeNull();
+      expect(parsed.company.schema_pack).toBe('gbrain-company');
+      expect(parsed.company.layout.path_defaults.map((entry: any) => entry.object_type)).toEqual([
+        'meeting',
+        'doc',
+        'decision',
+        'commitment',
+        'evidence',
+        'person',
+        'project',
+        'action',
+      ]);
 
       const cfg = JSON.parse(readFileSync(join(home, '.gbrain', 'config.json'), 'utf-8'));
+      expect(cfg.schema_pack).toBe('gbrain-company');
       expect(cfg.company.mode).toBe('trusted_workspace');
       expect(cfg.company.primary_source_id).toBe('company');
+      expect(cfg.company.schema_pack).toBe('gbrain-company');
+      expect(cfg.company.layout.templates.decision.frontmatter.type).toBe('decision');
       expect(cfg.company.policy_enforcement).toBe('deferred');
       expect(cfg.company.security_claim).toBe('none_trusted_workspace_only');
 
@@ -66,6 +80,14 @@ describe('gbrain init --company', () => {
       const defaultSource = await runCli(['config', 'get', 'sources.default'], home);
       expect(defaultSource.exitCode).toBe(0);
       expect(defaultSource.stdout.trim()).toBe('company');
+
+      const schemaPack = await runCli(['config', 'get', 'schema_pack'], home);
+      expect(schemaPack.exitCode).toBe(0);
+      expect(schemaPack.stdout.trim()).toBe('gbrain-company');
+
+      const layout = await runCli(['config', 'get', 'company.layout'], home);
+      expect(layout.exitCode).toBe(0);
+      expect(JSON.parse(layout.stdout).templates.action.frontmatter.type).toBe('action');
 
       const current = await runCli(['sources', 'current', '--json'], home);
       expect(current.exitCode).toBe(0);

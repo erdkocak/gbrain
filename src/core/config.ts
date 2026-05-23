@@ -178,6 +178,7 @@ export interface GBrainConfig {
     mode: 'trusted_workspace';
     trusted_workspace: true;
     primary_source_id: string;
+    schema_pack?: string;
     policy_enforcement: 'deferred';
     security_claim: 'none_trusted_workspace_only';
     metadata_placeholders: {
@@ -187,6 +188,7 @@ export interface GBrainConfig {
       evidence_refs: unknown[];
     };
     hosted_skill_exposure: 'not_enabled';
+    layout?: unknown;
   };
 }
 
@@ -444,6 +446,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'embedding_image_ocr_model',
   'embedding_columns',
   'search_embedding_column',
+  'schema_pack',
   'company',
   'remote_mcp',
   'sync',
@@ -457,6 +460,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'company.security_claim',
   'company.metadata_placeholders',
   'company.hosted_skill_exposure',
+  'company.schema_pack',
+  'company.layout',
+  'company.layout.version',
+  'company.layout.path_defaults',
+  'company.layout.templates',
+  'company.layout.policy_seed',
   // DB-plane (v0.32.3 search modes + related)
   'search.mode',
   'search.cache.enabled',
@@ -521,6 +530,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'dream.',            // dream.synthesize.*, dream.patterns.*
   'cycle.',            // cycle.<phase>.*
   'company.',          // company mode pilot marker and future policy metadata
+  'schema_pack.source.', // per-source schema pack overrides
   'embedding_columns.', // per-column overrides
   'provider_base_urls.', // per-provider base URL overrides
 ];
