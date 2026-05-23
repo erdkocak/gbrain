@@ -167,6 +167,27 @@ export interface GBrainConfig {
    * operator escape hatch.
    */
   schema_pack?: string;
+
+  /**
+   * Stage 1 company-brain pilot marker. This is a trusted-workspace product
+   * mode only: it reserves future policy metadata names but does not enforce
+   * ACLs, RLS, or secure multi-user behavior.
+   */
+  company?: {
+    kind: 'company';
+    mode: 'trusted_workspace';
+    trusted_workspace: true;
+    primary_source_id: string;
+    policy_enforcement: 'deferred';
+    security_claim: 'none_trusted_workspace_only';
+    metadata_placeholders: {
+      visibility_policy_id: null;
+      created_by: null;
+      derived_from: unknown[];
+      evidence_refs: unknown[];
+    };
+    hosted_skill_exposure: 'not_enabled';
+  };
 }
 
 /**
@@ -423,10 +444,19 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'embedding_image_ocr_model',
   'embedding_columns',
   'search_embedding_column',
+  'company',
   'remote_mcp',
   'sync',
   'sync.repo_path',
   'sync.last_commit',
+  'brain.mode',
+  'company.mode',
+  'company.trusted_workspace',
+  'company.primary_source_id',
+  'company.policy_enforcement',
+  'company.security_claim',
+  'company.metadata_placeholders',
+  'company.hosted_skill_exposure',
   // DB-plane (v0.32.3 search modes + related)
   'search.mode',
   'search.cache.enabled',
@@ -490,6 +520,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'models.',           // models.* (tier, aliases, per-task)
   'dream.',            // dream.synthesize.*, dream.patterns.*
   'cycle.',            // cycle.<phase>.*
+  'company.',          // company mode pilot marker and future policy metadata
   'embedding_columns.', // per-column overrides
   'provider_base_urls.', // per-provider base URL overrides
 ];

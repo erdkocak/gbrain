@@ -41,3 +41,6 @@ test/fixtures/pglite-snapshot.version
 
 # Private brain reports — never check these in (per CLAUDE.md privacy rule)
 reports/network-intelligence/
+
+# Local fork planning and agentic-development workspace.
+fork-development/

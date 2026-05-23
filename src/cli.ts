@@ -208,6 +208,15 @@ function hasHelpFlag(args: string[]): boolean {
 }
 
 function printCliOnlyHelp(command: string) {
+  if (command === 'init') {
+    console.log('Usage: gbrain init [--company] [--pglite|--supabase|--url <connection_string>]');
+    console.log('');
+    console.log('Options:');
+    console.log('  --company        Trusted workspace company-brain pilot; no ACL, RLS, or secure multi-user claim');
+    console.log('  --mcp-only       Configure a thin client only; cannot be combined with --company');
+    console.log('  --no-embedding   Defer embedding setup');
+    return;
+  }
   console.log(`Usage: gbrain ${command}`);
   console.log('');
   console.log(`gbrain ${command} - run gbrain --help for the full command list.`);
@@ -1612,7 +1621,8 @@ USAGE
   gbrain <command> [options]
 
 SETUP
-  init [--pglite|--supabase|--url]   Create brain (PGLite default, no server)
+  init [--company] [--pglite|--supabase|--url]
+                                      Create brain (PGLite default, no server)
   migrate --to <supabase|pglite>     Transfer brain between engines
   upgrade                            Self-update
   check-update [--json]              Check for new versions

@@ -186,6 +186,7 @@ describe('CLI dispatch integration', () => {
       const stdout = await new Response(proc.stdout).text();
       const exitCode = await proc.exited;
       expect(stdout).toContain('Usage: gbrain init');
+      expect(stdout).toContain('--company');
       expect(existsSync(join(home, '.gbrain', 'config.json'))).toBe(false);
       expect(exitCode).toBe(0);
     } finally {

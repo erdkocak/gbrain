@@ -9,11 +9,13 @@ const __dirname = dirname(__filename);
 import { saveConfig, loadConfig, loadConfigFileOnly, toEngineConfig, gbrainPath, configPath, isThinClient, type GBrainConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core/remote-mcp-probe.ts';
+import { applyCompanyModeSkeleton, type CompanyModeConfig } from '../core/company-mode.ts';
 
 export async function runInit(args: string[]) {
   const isSupabase = args.includes('--supabase');
   const isPGLite = args.includes('--pglite');
   const isMcpOnly = args.includes('--mcp-only');
+  const isCompany = args.includes('--company');
   const isForce = args.includes('--force');
   const isNonInteractive = args.includes('--non-interactive');
   const isMigrateOnly = args.includes('--migrate-only');
@@ -28,6 +30,15 @@ export async function runInit(args: string[]) {
   // Multi-topology v1: thin-client init. Skips local engine entirely; writes
   // remote_mcp config that the CLI dispatch guard reads to refuse DB-bound ops.
   if (isMcpOnly) {
+    if (isCompany) {
+      const msg = '`gbrain init --company` initializes a company brain. It cannot be combined with thin-client `--mcp-only`, which creates no local brain.';
+      if (jsonOutput) {
+        console.log(JSON.stringify({ status: 'error', reason: 'company_mcp_only_unsupported', message: msg }));
+      } else {
+        console.error(msg);
+      }
+      process.exit(1);
+    }
     return initRemoteMcp({ args, jsonOutput, isForce, isNonInteractive });
   }
 
@@ -59,6 +70,15 @@ export async function runInit(args: string[]) {
   // trigger env-detection / picker / fail-loud paths designed for fresh
   // installs.
   if (isMigrateOnly) {
+    if (isCompany) {
+      const msg = '`gbrain init --company` cannot be combined with `--migrate-only`; migrate-only updates schema without changing product mode.';
+      if (jsonOutput) {
+        console.log(JSON.stringify({ status: 'error', reason: 'company_migrate_only_unsupported', message: msg }));
+      } else {
+        console.error(msg);
+      }
+      process.exit(1);
+    }
     return initMigrateOnly({ jsonOutput });
   }
 
@@ -98,7 +118,7 @@ export async function runInit(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts });
+    return initPGLite({ jsonOutput, apiKey, customPath, aiOpts, companyMode: isCompany });
   }
 
   // Supabase/Postgres mode
@@ -117,7 +137,7 @@ export async function runInit(args: string[]) {
     databaseUrl = await supabaseWizard();
   }
 
-  return initPostgres({ databaseUrl, jsonOutput, apiKey, aiOpts });
+  return initPostgres({ databaseUrl, jsonOutput, apiKey, aiOpts, companyMode: isCompany });
 }
 
 interface ResolveAIOptionsArgs {
@@ -766,11 +786,21 @@ function printResolvedAIChoice(
   }
 }
 
+function printCompanyModeSummary(config: CompanyModeConfig): void {
+  console.log('');
+  console.log('Company mode: trusted workspace pilot.');
+  console.log(`  Primary source: ${config.primary_source_id}`);
+  console.log(`  Metadata placeholders reserved: ${Object.keys(config.metadata_placeholders).join(', ')}`);
+  console.log('  Enforcement deferred: no ACL, RLS, or secure multi-user claim.');
+  console.log('  Hosted skill exposure was not enabled by init --company.');
+}
+
 async function initPGLite(opts: {
   jsonOutput: boolean;
   apiKey: string | null;
   customPath: string | null;
   aiOpts?: ResolvedAIOptions;
+  companyMode?: boolean;
 }) {
   const dbPath = opts.customPath || gbrainPath('brain.pglite');
   console.log(`Setting up local brain with PGLite (no server needed)...`);
@@ -899,6 +929,10 @@ async function initPGLite(opts: {
       }
     }
 
+    const companyConfig = opts.companyMode
+      ? await applyCompanyModeSkeleton(engine)
+      : undefined;
+
     // v0.37.10.0 T7 (D9) + v0.37.11.0 Lane B.4: atomic embedding-config
     // persistence on top of the existing file-plane config (preserves
     // user-set fields like zeroentropy_api_key, chat_model, expansion_model).
@@ -920,6 +954,7 @@ async function initPGLite(opts: {
           : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
+      ...(companyConfig ? { company: companyConfig } : {}),
     };
     saveConfig(config);
 
@@ -940,10 +975,17 @@ async function initPGLite(opts: {
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
-      console.log(JSON.stringify({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count }));
+      console.log(JSON.stringify({
+        status: 'success',
+        engine: 'pglite',
+        path: dbPath,
+        pages: stats.page_count,
+        ...(companyConfig ? { company: companyConfig } : {}),
+      }));
     } else {
       console.log(`\nBrain ready at ${dbPath}`);
       console.log(`${stats.page_count} pages. Engine: PGLite (local Postgres).`);
+      if (companyConfig) printCompanyModeSummary(companyConfig);
       if (stats.page_count > 0) {
         console.log('');
         console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');
@@ -970,6 +1012,7 @@ async function initPostgres(opts: {
   jsonOutput: boolean;
   apiKey: string | null;
   aiOpts?: ResolvedAIOptions;
+  companyMode?: boolean;
 }) {
   const { databaseUrl } = opts;
 
@@ -1126,6 +1169,10 @@ async function initPostgres(opts: {
       }
     }
 
+    const companyConfig = opts.companyMode
+      ? await applyCompanyModeSkeleton(engine)
+      : undefined;
+
     // v0.37.10.0 T7 (D9) + v0.37.11.0 Lane B.4 (Postgres mirror): atomic
     // embedding-config persistence on top of the existing file-plane config.
     // Same precedence + same merge contract as the PGLite path above.
@@ -1143,6 +1190,7 @@ async function initPostgres(opts: {
           : {}),
       ...(opts.aiOpts?.expansion_model ? { expansion_model: opts.aiOpts.expansion_model } : {}),
       ...(opts.aiOpts?.chat_model ? { chat_model: opts.aiOpts.chat_model } : {}),
+      ...(companyConfig ? { company: companyConfig } : {}),
     };
     saveConfig(config);
     console.log('Config saved to ~/.gbrain/config.json');
@@ -1161,9 +1209,15 @@ async function initPostgres(opts: {
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
-      console.log(JSON.stringify({ status: 'success', engine: 'postgres', pages: stats.page_count }));
+      console.log(JSON.stringify({
+        status: 'success',
+        engine: 'postgres',
+        pages: stats.page_count,
+        ...(companyConfig ? { company: companyConfig } : {}),
+      }));
     } else {
       console.log(`\nBrain ready. ${stats.page_count} pages. Engine: Postgres (Supabase).`);
+      if (companyConfig) printCompanyModeSummary(companyConfig);
       if (stats.page_count > 0) {
         console.log('');
         console.log('Existing brain detected. To wire up the v0.10.3 knowledge graph:');
