@@ -189,6 +189,7 @@ export interface GBrainConfig {
     };
     hosted_skill_exposure: 'deny_by_default_trusted_pilot';
     hosted_surface?: unknown;
+    policy?: unknown;
     layout?: unknown;
   };
 }
@@ -467,6 +468,15 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'company.hosted_surface.allowlist',
   'company.hosted_surface.advisory_only',
   'company.hosted_surface.disabled_surfaces',
+  'company.policy',
+  'company.policy.seed',
+  'company.policy.storage',
+  'company.policy.metadata',
+  'company.policy.version',
+  'company.policy.hash',
+  'company.policy.default_policy_id',
+  'company.policy.default_decision',
+  'company.policy.enforcement',
   'company.schema_pack',
   'company.layout',
   'company.layout.version',

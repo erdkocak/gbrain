@@ -11,6 +11,7 @@ import { createEngine } from '../core/engine-factory.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core/remote-mcp-probe.ts';
 import { applyCompanyModeSkeleton, type CompanyModeConfig } from '../core/company-mode.ts';
 import { applyCompanyLayout } from '../core/company-layout.ts';
+import { applyCompanyPolicySeed } from '../core/company-policy.ts';
 
 export async function runInit(args: string[]) {
   const isSupabase = args.includes('--supabase');
@@ -797,6 +798,12 @@ function printCompanyModeSummary(config: CompanyModeConfig): void {
     const objectTypes = layout.path_defaults?.map((entry) => entry.object_type).join(', ');
     if (objectTypes) console.log(`  Layout defaults: ${objectTypes}`);
   }
+  if (config.policy && typeof config.policy === 'object') {
+    const policy = config.policy as { metadata?: { policy_version?: string } };
+    if (policy.metadata?.policy_version) {
+      console.log(`  Policy seed: ${policy.metadata.policy_version} (represented, not enforced).`);
+    }
+  }
   console.log('  Enforcement deferred: no ACL, RLS, or secure multi-user claim.');
   console.log('  Hosted skill exposure: deny-by-default trusted pilot allowlist only.');
   console.log('  Hosted writes and external follow-up execution remain disabled.');
@@ -805,10 +812,15 @@ function printCompanyModeSummary(config: CompanyModeConfig): void {
 async function applyCompanyModeAndLayout(engine: Awaited<ReturnType<typeof createEngine>>): Promise<CompanyModeConfig> {
   const companyConfig = await applyCompanyModeSkeleton(engine);
   const layout = await applyCompanyLayout(engine);
+  const policy = await applyCompanyPolicySeed(engine);
   return {
     ...companyConfig,
     schema_pack: layout.schema_pack,
     layout,
+    policy: {
+      seed: policy.seed,
+      metadata: policy.metadata,
+    },
   };
 }
 

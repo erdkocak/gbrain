@@ -39,6 +39,7 @@ export interface CompanyModeConfig {
   };
   hosted_skill_exposure: typeof COMPANY_HOSTED_SKILL_EXPOSURE;
   hosted_surface: CompanyHostedSurfaceConfig;
+  policy?: unknown;
   layout?: unknown;
 }
 
