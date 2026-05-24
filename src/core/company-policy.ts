@@ -191,6 +191,7 @@ export function normalizeCompanyPolicySeed(raw: unknown): CompanyPolicySeed {
   const userIds = assertUniqueIds(users.map((u) => u.id), 'users', issues);
   const groupIds = assertUniqueIds(groups.map((g) => g.id), 'groups', issues);
   const policyIds = assertUniqueIds(policies.map((p) => p.id), 'policies', issues);
+  validateUniqueUserIdentityKeys(users, issues);
 
   for (const group of groups) {
     for (const userId of group.members) {
@@ -410,6 +411,32 @@ function validatePrincipalSet(
   }
   for (const groupId of principals.groups) {
     if (!groupIds.has(groupId)) issues.push(`${path}.groups references unknown group "${groupId}"`);
+  }
+}
+
+function validateUniqueUserIdentityKeys(users: CompanyPolicySeedUser[], issues: string[]): void {
+  const emails = new Map<string, string>();
+  const subjects = new Map<string, string>();
+
+  for (const user of users) {
+    const email = user.email?.trim().toLowerCase();
+    if (email) {
+      const previous = emails.get(email);
+      if (previous) {
+        issues.push(`users.${user.id}.email duplicates users.${previous}.email "${email}"`);
+      } else {
+        emails.set(email, user.id);
+      }
+    }
+
+    for (const subject of user.idp_subjects) {
+      const previous = subjects.get(subject);
+      if (previous) {
+        issues.push(`users.${user.id}.idp_subjects duplicates users.${previous}.idp_subjects "${subject}"`);
+      } else {
+        subjects.set(subject, user.id);
+      }
+    }
   }
 }
 

@@ -544,7 +544,7 @@ async function makeContext(engine: BrainEngine, params: Record<string, unknown>)
     // to the cross-source view (D16 back-compat path).
     sourceId = undefined;
   }
-  return {
+  const ctx: OperationContext = {
     engine,
     config: loadConfig() || { engine: 'postgres' },
     logger: { info: console.log, warn: console.warn, error: console.error },
@@ -559,6 +559,15 @@ async function makeContext(engine: BrainEngine, params: Record<string, unknown>)
     // every transport.
     sourceId: sourceId ?? 'default',
   };
+  try {
+    const { buildCompanyRequestContextFromOperationContext } = await import('./core/company-request-context.ts');
+    const companyRequestContext = await buildCompanyRequestContextFromOperationContext(ctx, params);
+    if (companyRequestContext) ctx.companyRequestContext = companyRequestContext;
+  } catch {
+    // Stage 2C context is representational only; CLI behavior must not depend
+    // on company policy config being present or valid before Stage 3.
+  }
+  return ctx;
 }
 
 function formatResult(opName: string, result: unknown): string {

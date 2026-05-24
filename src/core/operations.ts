@@ -41,6 +41,7 @@ import {
   CODE_DEF_DESCRIPTION,
   CODE_REFS_DESCRIPTION,
 } from './operations-descriptions.ts';
+import type { CompanyRequestContext } from './company-request-context.ts';
 
 // --- Types ---
 
@@ -236,6 +237,15 @@ export interface AuthInfo {
    * on every request — see PR #586 review note D14=B).
    */
   clientName?: string;
+  /**
+   * Stage 2C company-brain identity hints. OAuth/IdP middleware can thread
+   * these when it has a human subject; client_credentials callers can still
+   * map through company policy seed idp_subjects such as oauth-client:<id>.
+   * These fields are context only until Stage 3 enforcement lands.
+   */
+  companyUserId?: string;
+  userEmail?: string;
+  idpSubject?: string;
   scopes: string[];
   expiresAt?: number;
   /**
@@ -387,6 +397,12 @@ export interface OperationContext {
    * satisfied even on single-source brains.
    */
   sourceId: string;
+  /**
+   * Stage 2C company-brain request context. This carries resolved identity,
+   * source routing, and policy-evaluator outputs for later enforcement/audit
+   * stages. Presence of this object does not enforce policy by itself.
+   */
+  companyRequestContext?: CompanyRequestContext;
 }
 
 /**

@@ -103,6 +103,83 @@ audit:
 `)).toThrow(CompanyPolicySeedError);
   });
 
+  test('rejects duplicate user identity keys used by request-context mapping', () => {
+    const duplicateCases = [
+      {
+        name: 'case-normalized email',
+        userA: 'email: alice@example.invalid',
+        userB: 'email: ALICE@example.invalid',
+      },
+      {
+        name: 'IdP subject',
+        userA: 'idp_subjects: [idp:alice-subject]',
+        userB: 'idp_subjects: [idp:alice-subject]',
+      },
+      {
+        name: 'OAuth client id alias',
+        userA: 'idp_subjects: [oauth-client:gbrain_cl_shared]',
+        userB: 'idp_subjects: [oauth-client:gbrain_cl_shared]',
+      },
+      {
+        name: 'OAuth client name alias',
+        userA: 'idp_subjects: [client-name:shared-agent]',
+        userB: 'idp_subjects: [client-name:shared-agent]',
+      },
+    ];
+
+    for (const entry of duplicateCases) {
+      expect(() => parseCompanyPolicySeedYaml(`
+version: 1
+users:
+  - id: alice-example
+    ${entry.userA}
+  - id: bob-example
+    ${entry.userB}
+groups:
+  - id: company-pilot-admins
+    members:
+      - alice-example
+policies:
+  - id: company-trusted-workspace
+    read:
+      groups:
+        - company-pilot-admins
+path_defaults:
+  - path_prefix: meetings/
+    visibility_policy_id: company-trusted-workspace
+audit:
+  readers:
+    groups:
+      - company-pilot-admins
+`), entry.name).toThrow(CompanyPolicySeedError);
+    }
+
+    expect(() => parseCompanyPolicySeedYaml(`
+version: 1
+users:
+  - id: alice-example
+    idp_subjects:
+      - idp:alice-subject
+      - idp:alice-subject
+groups:
+  - id: company-pilot-admins
+    members:
+      - alice-example
+policies:
+  - id: company-trusted-workspace
+    read:
+      groups:
+        - company-pilot-admins
+path_defaults:
+  - path_prefix: meetings/
+    visibility_policy_id: company-trusted-workspace
+audit:
+  readers:
+    groups:
+      - company-pilot-admins
+`), 'duplicate subject in one user').toThrow(CompanyPolicySeedError);
+  });
+
   test('applies policy seed into config-backed durable storage without enforcement claims', async () => {
     const configSet: Record<string, string> = {};
     const calls: Array<{ sql: string; params: unknown[] }> = [];

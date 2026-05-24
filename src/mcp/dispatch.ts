@@ -10,6 +10,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { Operation, OperationContext, AuthInfo } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
+import { buildCompanyRequestContextFromOperationContext } from '../core/company-request-context.ts';
+import type { CompanyIdentityInput, CompanyRequestContext } from '../core/company-request-context.ts';
 
 export interface ToolResult {
   content: { type: 'text'; text: string }[];
@@ -70,6 +72,15 @@ export interface DispatchOpts {
    * was replaced by dispatchToolCall.
    */
   auth?: AuthInfo;
+  /**
+   * Stage 2C company-brain context. If omitted, dispatch attempts a best-effort
+   * context build from company.policy.* config before invoking the handler.
+   * This is representational only; operations are not policy-enforced here.
+   */
+  companyRequestContext?: CompanyRequestContext;
+  companyIdentity?: CompanyIdentityInput;
+  requestId?: string;
+  sessionId?: string | null;
 }
 
 /**
@@ -248,6 +259,16 @@ export async function dispatchToolCall(
   }
 
   const ctx = buildOperationContext(engine, safeParams, opts);
+  if (opts.companyRequestContext) {
+    ctx.companyRequestContext = opts.companyRequestContext;
+  } else {
+    const companyRequestContext = await buildCompanyRequestContextFromOperationContext(ctx, safeParams, {
+      requestId: opts.requestId,
+      sessionId: opts.sessionId,
+      identity: opts.companyIdentity,
+    });
+    if (companyRequestContext) ctx.companyRequestContext = companyRequestContext;
+  }
 
   try {
     const result = await op.handler(ctx, safeParams);
