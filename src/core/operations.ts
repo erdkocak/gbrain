@@ -26,6 +26,7 @@ import { bumpLastRetrievedAt } from './last-retrieved.ts';
 import { CJK_SLUG_CHARS } from './cjk.ts';
 import {
   companyReadableSearchOpts,
+  filterReadableCodeEdges,
   filterReadableAnomalies,
   filterReadablePageBackedRows,
   filterReadablePageRefRows,
@@ -1817,10 +1818,16 @@ const get_links: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    // v0.31.8 (D16): thread ctx.sourceId. When unset, engine falls through
-    // to cross-source view (back-compat).
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    return ctx.engine.getLinks(p.slug as string, sourceOpts);
+    const scope = {
+      ...sourceScopeOpts(ctx),
+      ...companyReadableSearchOpts(ctx),
+    };
+    const links = await ctx.engine.getLinks(p.slug as string, scope);
+    return filterReadablePageRefRows(ctx, links, (link) => [
+      { slug: link.from_slug },
+      { slug: link.to_slug },
+      ...(link.origin_slug ? [{ slug: link.origin_slug }] : []),
+    ]);
   },
   scope: 'read',
 };
@@ -1832,8 +1839,16 @@ const get_backlinks: Operation = {
     slug: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    return ctx.engine.getBacklinks(p.slug as string, sourceOpts);
+    const scope = {
+      ...sourceScopeOpts(ctx),
+      ...companyReadableSearchOpts(ctx),
+    };
+    const links = await ctx.engine.getBacklinks(p.slug as string, scope);
+    return filterReadablePageRefRows(ctx, links, (link) => [
+      { slug: link.from_slug },
+      { slug: link.to_slug },
+      ...(link.origin_slug ? [{ slug: link.origin_slug }] : []),
+    ]);
   },
   scope: 'read',
   cliHints: { name: 'backlinks', positional: ['slug'] },
@@ -1871,17 +1886,42 @@ const traverse_graph: Operation = {
     // walks stay within the auth'd client's accessible sources. Pre-fix,
     // traverseGraph / traversePaths happily followed edges into pages from
     // foreign sources, leaking topology + page metadata via the graph op.
-    const scope = sourceScopeOpts(ctx);
+    const scope = {
+      ...sourceScopeOpts(ctx),
+      ...companyReadableSearchOpts(ctx),
+    };
     // Backward compat: when neither link_type nor direction is provided, return
     // the legacy GraphNode[] shape. Once either is set, switch to GraphPath[].
     if (linkType === undefined && direction === undefined) {
-      return ctx.engine.traverseGraph(slug, depth, scope);
+      const nodes = await ctx.engine.traverseGraph(slug, depth, scope);
+      return filterReadableGraphNodes(ctx, nodes);
     }
-    return ctx.engine.traversePaths(slug, { depth, linkType, direction, ...scope });
+    const paths = await ctx.engine.traversePaths(slug, { depth, linkType, direction, ...scope });
+    return filterReadablePageRefRows(ctx, paths, (path) => [
+      { slug: path.from_slug },
+      { slug: path.to_slug },
+    ]);
   },
   scope: 'read',
   cliHints: { name: 'graph', positional: ['slug'] },
 };
+
+async function filterReadableGraphNodes(
+  ctx: OperationContext,
+  nodes: Awaited<ReturnType<BrainEngine['traverseGraph']>>,
+): Promise<Awaited<ReturnType<BrainEngine['traverseGraph']>>> {
+  const visibleNodes = await filterReadablePageRefRows(ctx, nodes, (node) => [
+    { slug: node.slug },
+  ]);
+  const filtered: Awaited<ReturnType<BrainEngine['traverseGraph']>> = [];
+  for (const node of visibleNodes) {
+    const links = await filterReadablePageRefRows(ctx, node.links ?? [], (link) => [
+      { slug: link.to_slug },
+    ]);
+    filtered.push({ ...node, links });
+  }
+  return filtered;
+}
 
 // --- Timeline ---
 
@@ -3608,7 +3648,8 @@ const code_callers: Operation = {
       allSources,
       sourceId,
     });
-    return { symbol, count: edges.length, callers: edges };
+    const callers = await filterReadableCodeEdges(ctx, edges);
+    return { symbol, count: callers.length, callers };
   },
   cliHints: { name: 'code_callers', hidden: true },
 };
@@ -3639,7 +3680,8 @@ const code_callees: Operation = {
       allSources,
       sourceId,
     });
-    return { symbol, count: edges.length, callees: edges };
+    const callees = await filterReadableCodeEdges(ctx, edges);
+    return { symbol, count: callees.length, callees };
   },
   cliHints: { name: 'code_callees', hidden: true },
 };
@@ -3655,10 +3697,15 @@ const code_def: Operation = {
   scope: 'read',
   handler: async (ctx, p) => {
     const { findCodeDef } = await import('../commands/code-def.ts');
-    const defs = await findCodeDef(ctx.engine, p.symbol as string, {
+    const scope = {
+      ...sourceScopeOpts(ctx),
+      ...companyReadableSearchOpts(ctx),
+    };
+    const defs = await filterReadablePageRefRows(ctx, await findCodeDef(ctx.engine, p.symbol as string, {
       limit: (p.limit as number) ?? 20,
       language: (p.lang as string) || undefined,
-    });
+      ...scope,
+    }), (row) => [{ slug: row.slug, source_id: row.source_id }]);
     return { symbol: p.symbol as string, count: defs.length, defs };
   },
   cliHints: { name: 'code_def', hidden: true },
@@ -3675,10 +3722,15 @@ const code_refs: Operation = {
   scope: 'read',
   handler: async (ctx, p) => {
     const { findCodeRefs } = await import('../commands/code-refs.ts');
-    const refs = await findCodeRefs(ctx.engine, p.symbol as string, {
+    const scope = {
+      ...sourceScopeOpts(ctx),
+      ...companyReadableSearchOpts(ctx),
+    };
+    const refs = await filterReadablePageRefRows(ctx, await findCodeRefs(ctx.engine, p.symbol as string, {
       limit: (p.limit as number) ?? 50,
       language: (p.lang as string) || undefined,
-    });
+      ...scope,
+    }), (row) => [{ slug: row.slug, source_id: row.source_id }]);
     return { symbol: p.symbol as string, count: refs.length, refs };
   },
   cliHints: { name: 'code_refs', hidden: true },
@@ -3703,16 +3755,20 @@ const code_blast: Operation = {
     const depth = Math.min((p.depth as number) ?? 5, 8);
     const max_nodes = Math.min((p.max_nodes as number) ?? 200, 200);
     const exact = (p.exact as boolean) ?? false;
+    const readablePolicyIds = companyReadableSearchOpts(ctx).readablePolicyIds;
+    const compute = () => runRecursiveWalk(ctx.engine, symbol, {
+      direction: 'callers',
+      depth,
+      maxNodes: max_nodes,
+      sourceId: ctx.sourceId,
+      exact,
+      readablePolicyIds,
+    });
+    if (readablePolicyIds !== undefined) return compute();
     return getCachedOrCompute(
       ctx.engine,
       { symbol_qualified: symbol, depth, source_id: ctx.sourceId },
-      () => runRecursiveWalk(ctx.engine, symbol, {
-        direction: 'callers',
-        depth,
-        maxNodes: max_nodes,
-        sourceId: ctx.sourceId,
-        exact,
-      }),
+      compute,
     );
   },
   cliHints: { name: 'code_blast', hidden: true },
@@ -3735,16 +3791,20 @@ const code_flow: Operation = {
     const depth = Math.min((p.depth as number) ?? 8, 12);
     const max_nodes = Math.min((p.max_nodes as number) ?? 200, 200);
     const exact = (p.exact as boolean) ?? false;
+    const readablePolicyIds = companyReadableSearchOpts(ctx).readablePolicyIds;
+    const compute = () => runRecursiveWalk(ctx.engine, symbol, {
+      direction: 'callees',
+      depth,
+      maxNodes: max_nodes,
+      sourceId: ctx.sourceId,
+      exact,
+      readablePolicyIds,
+    });
+    if (readablePolicyIds !== undefined) return compute();
     return getCachedOrCompute(
       ctx.engine,
       { symbol_qualified: symbol + ':flow', depth, source_id: ctx.sourceId },
-      () => runRecursiveWalk(ctx.engine, symbol, {
-        direction: 'callees',
-        depth,
-        maxNodes: max_nodes,
-        sourceId: ctx.sourceId,
-        exact,
-      }),
+      compute,
     );
   },
   cliHints: { name: 'code_flow', hidden: true },

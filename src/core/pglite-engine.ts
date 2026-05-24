@@ -49,6 +49,7 @@ import {
   buildVisibilityClause,
   buildRecencyComponentSql,
   buildReadablePolicyClause,
+  buildNullableReadablePolicyClause,
   normalizeReadablePolicyIds,
 } from './search/sql-ranking.ts';
 import {
@@ -1996,26 +1997,9 @@ export class PGLiteEngine implements BrainEngine {
     }
   }
 
-  async getLinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
-    // v0.31.8 (D16): two-branch query. Without opts.sourceId, no source filter
-    // (preserves pre-v0.31.8 cross-source semantics for back-link validators
-    // and read-side op handlers that haven't threaded sourceId yet). With
-    // opts.sourceId, scope to that source — used by reconcileLinks and any
-    // ctx.sourceId-aware read op (D20).
-    if (opts?.sourceId) {
-      const { rows } = await this.db.query(
-        `SELECT f.slug as from_slug, t.slug as to_slug,
-                l.link_type, l.context, l.link_source,
-                o.slug as origin_slug, l.origin_field
-         FROM links l
-         JOIN pages f ON f.id = l.from_page_id
-         JOIN pages t ON t.id = l.to_page_id
-         LEFT JOIN pages o ON o.id = l.origin_page_id
-         WHERE f.slug = $1 AND f.source_id = $2`,
-        [slug, opts.sourceId]
-      );
-      return rows as unknown as Link[];
-    }
+  async getLinks(slug: string, opts?: import('./engine.ts').LinkReadOpts): Promise<Link[]> {
+    const params: unknown[] = [slug];
+    const filters = buildPgliteLinkScopeFilters(opts, params, 'f', 't', 'o');
     const { rows } = await this.db.query(
       `SELECT f.slug as from_slug, t.slug as to_slug,
               l.link_type, l.context, l.link_source,
@@ -2024,28 +2008,15 @@ export class PGLiteEngine implements BrainEngine {
        JOIN pages f ON f.id = l.from_page_id
        JOIN pages t ON t.id = l.to_page_id
        LEFT JOIN pages o ON o.id = l.origin_page_id
-       WHERE f.slug = $1`,
-      [slug]
+       WHERE f.slug = $1 ${filters}`,
+      params
     );
     return rows as unknown as Link[];
   }
 
-  async getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]> {
-    // v0.31.8 (D16): two-branch query. See getLinks() comment.
-    if (opts?.sourceId) {
-      const { rows } = await this.db.query(
-        `SELECT f.slug as from_slug, t.slug as to_slug,
-                l.link_type, l.context, l.link_source,
-                o.slug as origin_slug, l.origin_field
-         FROM links l
-         JOIN pages f ON f.id = l.from_page_id
-         JOIN pages t ON t.id = l.to_page_id
-         LEFT JOIN pages o ON o.id = l.origin_page_id
-         WHERE t.slug = $1 AND t.source_id = $2`,
-        [slug, opts.sourceId]
-      );
-      return rows as unknown as Link[];
-    }
+  async getBacklinks(slug: string, opts?: import('./engine.ts').LinkReadOpts): Promise<Link[]> {
+    const params: unknown[] = [slug];
+    const filters = buildPgliteLinkScopeFilters(opts, params, 't', 'f', 'o');
     const { rows } = await this.db.query(
       `SELECT f.slug as from_slug, t.slug as to_slug,
               l.link_type, l.context, l.link_source,
@@ -2054,8 +2025,8 @@ export class PGLiteEngine implements BrainEngine {
        JOIN pages f ON f.id = l.from_page_id
        JOIN pages t ON t.id = l.to_page_id
        LEFT JOIN pages o ON o.id = l.origin_page_id
-       WHERE t.slug = $1`,
-      [slug]
+       WHERE t.slug = $1 ${filters}`,
+      params
     );
     return rows as unknown as Link[];
   }
@@ -2097,18 +2068,43 @@ export class PGLiteEngine implements BrainEngine {
     let seedScope = '';
     let stepScope = '';
     let aggScope = '';
+    let stepOriginScope = '';
+    let aggOriginScope = '';
     if (useSourceIds) {
       params.push(opts!.sourceIds);
       const idx = params.length;
       seedScope = `AND p.source_id = ANY($${idx}::text[])`;
       stepScope = `AND p2.source_id = ANY($${idx}::text[])`;
       aggScope = `AND p3.source_id = ANY($${idx}::text[])`;
+      stepOriginScope = `AND (op.id IS NULL OR op.source_id = ANY($${idx}::text[]))`;
+      aggOriginScope = `AND (op2.id IS NULL OR op2.source_id = ANY($${idx}::text[]))`;
     } else if (opts?.sourceId) {
       params.push(opts.sourceId);
       const idx = params.length;
       seedScope = `AND p.source_id = $${idx}`;
       stepScope = `AND p2.source_id = $${idx}`;
       aggScope = `AND p3.source_id = $${idx}`;
+      stepOriginScope = `AND (op.id IS NULL OR op.source_id = $${idx})`;
+      aggOriginScope = `AND (op2.id IS NULL OR op2.source_id = $${idx})`;
+    }
+    let seedPolicyScope = '';
+    let stepPolicyScope = '';
+    let aggPolicyScope = '';
+    let stepOriginPolicyScope = '';
+    let aggOriginPolicyScope = '';
+    const readablePolicyIds = normalizeReadablePolicyIds(opts?.readablePolicyIds);
+    if (readablePolicyIds) {
+      if (readablePolicyIds.length === 0) {
+        seedPolicyScope = 'AND FALSE';
+      } else {
+        params.push(readablePolicyIds);
+        const idx = `$${params.length}`;
+        seedPolicyScope = buildReadablePolicyClause('p', idx);
+        stepPolicyScope = buildReadablePolicyClause('p2', idx);
+        aggPolicyScope = buildReadablePolicyClause('p3', idx);
+        stepOriginPolicyScope = buildNullableReadablePolicyClause('op', idx);
+        aggOriginPolicyScope = buildNullableReadablePolicyClause('op2', idx);
+      }
     }
 
     // T8 (v0.36+): frontier cap. When set, the recursive term applies a
@@ -2125,9 +2121,13 @@ export class PGLiteEngine implements BrainEngine {
         FROM graph g
         JOIN links l ON l.from_page_id = g.id
         JOIN pages p2 ON p2.id = l.to_page_id
+        LEFT JOIN pages op ON op.id = l.origin_page_id
         WHERE g.depth < $2
           AND NOT (p2.id = ANY(g.visited))
           ${stepScope}
+          ${stepOriginScope}
+          ${stepPolicyScope}
+          ${stepOriginPolicyScope}
         ORDER BY p2.slug ASC, p2.id ASC
         LIMIT $${capIdx})`;
     } else {
@@ -2135,9 +2135,13 @@ export class PGLiteEngine implements BrainEngine {
         FROM graph g
         JOIN links l ON l.from_page_id = g.id
         JOIN pages p2 ON p2.id = l.to_page_id
+        LEFT JOIN pages op ON op.id = l.origin_page_id
         WHERE g.depth < $2
           AND NOT (p2.id = ANY(g.visited))
-          ${stepScope}`;
+          ${stepScope}
+          ${stepOriginScope}
+          ${stepPolicyScope}
+          ${stepOriginPolicyScope}`;
     }
 
     // Cycle prevention: visited array tracks page IDs already in the path.
@@ -2145,7 +2149,7 @@ export class PGLiteEngine implements BrainEngine {
     const { rows } = await this.db.query(
       `WITH RECURSIVE graph AS (
         SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited
-        FROM pages p WHERE p.slug = $1 ${seedScope}
+        FROM pages p WHERE p.slug = $1 ${seedScope} ${seedPolicyScope}
 
         UNION ALL
 
@@ -2161,7 +2165,8 @@ export class PGLiteEngine implements BrainEngine {
           (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
            FROM links l2
            JOIN pages p3 ON p3.id = l2.to_page_id
-           WHERE l2.from_page_id = g.id ${aggScope}),
+           LEFT JOIN pages op2 ON op2.id = l2.origin_page_id
+           WHERE l2.from_page_id = g.id ${aggScope} ${aggOriginScope} ${aggPolicyScope} ${aggOriginPolicyScope}),
           '[]'::jsonb
         ) as links
       FROM graph g
@@ -2183,7 +2188,7 @@ export class PGLiteEngine implements BrainEngine {
 
   async traversePaths(
     slug: string,
-    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[] },
+    opts?: import('./engine.ts').TraversePathsOpts,
   ): Promise<GraphPath[]> {
     const depth = opts?.depth ?? 5;
     const direction = opts?.direction ?? 'out';
@@ -2200,6 +2205,8 @@ export class PGLiteEngine implements BrainEngine {
     let stepScope = '';
     let pfScope = '';
     let ptScope = '';
+    let stepOriginScope = '';
+    let finalOriginScope = '';
     if (useSourceIds) {
       params.push(opts!.sourceIds);
       const idx = params.length;
@@ -2207,6 +2214,8 @@ export class PGLiteEngine implements BrainEngine {
       stepScope = `AND p2.source_id = ANY($${idx}::text[])`;
       pfScope = `AND pf.source_id = ANY($${idx}::text[])`;
       ptScope = `AND pt.source_id = ANY($${idx}::text[])`;
+      stepOriginScope = `AND (op.id IS NULL OR op.source_id = ANY($${idx}::text[]))`;
+      finalOriginScope = `AND (op2.id IS NULL OR op2.source_id = ANY($${idx}::text[]))`;
     } else if (opts?.sourceId) {
       params.push(opts.sourceId);
       const idx = params.length;
@@ -2214,6 +2223,30 @@ export class PGLiteEngine implements BrainEngine {
       stepScope = `AND p2.source_id = $${idx}`;
       pfScope = `AND pf.source_id = $${idx}`;
       ptScope = `AND pt.source_id = $${idx}`;
+      stepOriginScope = `AND (op.id IS NULL OR op.source_id = $${idx})`;
+      finalOriginScope = `AND (op2.id IS NULL OR op2.source_id = $${idx})`;
+    }
+
+    let seedPolicyScope = '';
+    let stepPolicyScope = '';
+    let pfPolicyScope = '';
+    let ptPolicyScope = '';
+    let stepOriginPolicyScope = '';
+    let finalOriginPolicyScope = '';
+    const readablePolicyIds = normalizeReadablePolicyIds(opts?.readablePolicyIds);
+    if (readablePolicyIds) {
+      if (readablePolicyIds.length === 0) {
+        seedPolicyScope = 'AND FALSE';
+      } else {
+        params.push(readablePolicyIds);
+        const idx = `$${params.length}`;
+        seedPolicyScope = buildReadablePolicyClause('p', idx);
+        stepPolicyScope = buildReadablePolicyClause('p2', idx);
+        pfPolicyScope = buildReadablePolicyClause('pf', idx);
+        ptPolicyScope = buildReadablePolicyClause('pt', idx);
+        stepOriginPolicyScope = buildNullableReadablePolicyClause('op', idx);
+        finalOriginPolicyScope = buildNullableReadablePolicyClause('op2', idx);
+      }
     }
 
     let sql: string;
@@ -2221,50 +2254,66 @@ export class PGLiteEngine implements BrainEngine {
       sql = `
         WITH RECURSIVE walk AS (
           SELECT p.id, p.slug, 0::int AS depth, ARRAY[p.id] AS visited
-          FROM pages p WHERE p.slug = $1 ${seedScope}
+          FROM pages p WHERE p.slug = $1 ${seedScope} ${seedPolicyScope}
           UNION ALL
           SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
           FROM walk w
           JOIN links l ON l.from_page_id = w.id
           JOIN pages p2 ON p2.id = l.to_page_id
+          LEFT JOIN pages op ON op.id = l.origin_page_id
           WHERE w.depth < $2
             AND NOT (p2.id = ANY(w.visited))
             ${linkTypeWhere}
             ${stepScope}
+            ${stepOriginScope}
+            ${stepPolicyScope}
+            ${stepOriginPolicyScope}
         )
         SELECT w.slug AS from_slug, p2.slug AS to_slug,
                l.link_type, l.context, w.depth + 1 AS depth
         FROM walk w
         JOIN links l ON l.from_page_id = w.id
         JOIN pages p2 ON p2.id = l.to_page_id
+        LEFT JOIN pages op2 ON op2.id = l.origin_page_id
         WHERE w.depth < $2
           ${linkTypeWhere}
           ${stepScope}
+          ${finalOriginScope}
+          ${stepPolicyScope}
+          ${finalOriginPolicyScope}
         ORDER BY depth, from_slug, to_slug
       `;
     } else if (direction === 'in') {
       sql = `
         WITH RECURSIVE walk AS (
           SELECT p.id, p.slug, 0::int AS depth, ARRAY[p.id] AS visited
-          FROM pages p WHERE p.slug = $1 ${seedScope}
+          FROM pages p WHERE p.slug = $1 ${seedScope} ${seedPolicyScope}
           UNION ALL
           SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
           FROM walk w
           JOIN links l ON l.to_page_id = w.id
           JOIN pages p2 ON p2.id = l.from_page_id
+          LEFT JOIN pages op ON op.id = l.origin_page_id
           WHERE w.depth < $2
             AND NOT (p2.id = ANY(w.visited))
             ${linkTypeWhere}
             ${stepScope}
+            ${stepOriginScope}
+            ${stepPolicyScope}
+            ${stepOriginPolicyScope}
         )
         SELECT p2.slug AS from_slug, w.slug AS to_slug,
                l.link_type, l.context, w.depth + 1 AS depth
         FROM walk w
         JOIN links l ON l.to_page_id = w.id
         JOIN pages p2 ON p2.id = l.from_page_id
+        LEFT JOIN pages op2 ON op2.id = l.origin_page_id
         WHERE w.depth < $2
           ${linkTypeWhere}
           ${stepScope}
+          ${finalOriginScope}
+          ${stepPolicyScope}
+          ${finalOriginPolicyScope}
         ORDER BY depth, from_slug, to_slug
       `;
     } else {
@@ -2273,16 +2322,20 @@ export class PGLiteEngine implements BrainEngine {
       sql = `
         WITH RECURSIVE walk AS (
           SELECT p.id, 0::int AS depth, ARRAY[p.id] AS visited
-          FROM pages p WHERE p.slug = $1 ${seedScope}
+          FROM pages p WHERE p.slug = $1 ${seedScope} ${seedPolicyScope}
           UNION ALL
           SELECT p2.id, w.depth + 1, w.visited || p2.id
           FROM walk w
           JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
           JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END
+          LEFT JOIN pages op ON op.id = l.origin_page_id
           WHERE w.depth < $2
             AND NOT (p2.id = ANY(w.visited))
             ${linkTypeWhere}
             ${stepScope}
+            ${stepOriginScope}
+            ${stepPolicyScope}
+            ${stepOriginPolicyScope}
         )
         SELECT pf.slug AS from_slug, pt.slug AS to_slug,
                l.link_type, l.context, w.depth + 1 AS depth
@@ -2290,10 +2343,15 @@ export class PGLiteEngine implements BrainEngine {
         JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
         JOIN pages pf ON pf.id = l.from_page_id
         JOIN pages pt ON pt.id = l.to_page_id
+        LEFT JOIN pages op2 ON op2.id = l.origin_page_id
         WHERE w.depth < $2
           ${linkTypeWhere}
           ${pfScope}
           ${ptScope}
+          ${finalOriginScope}
+          ${pfPolicyScope}
+          ${ptPolicyScope}
+          ${finalOriginPolicyScope}
         ORDER BY depth, from_slug, to_slug
       `;
     }
@@ -2317,20 +2375,25 @@ export class PGLiteEngine implements BrainEngine {
     return result;
   }
 
-  async getBacklinkCounts(slugs: string[]): Promise<Map<string, number>> {
+  async getBacklinkCounts(slugs: string[], opts?: import('./engine.ts').BacklinkCountOpts): Promise<Map<string, number>> {
     const result = new Map<string, number>();
     if (slugs.length === 0) return result;
     // Initialize all slugs to 0 so callers get a consistent map.
     for (const s of slugs) result.set(s, 0);
 
     // PGLite needs explicit cast for array binding (does not auto-serialize JS arrays).
+    const params: unknown[] = [slugs];
+    const filters = buildPgliteLinkScopeFilters(opts, params, 'p', 'f', 'o');
     const { rows } = await this.db.query(
       `SELECT p.slug AS slug, COUNT(l.id)::int AS cnt
        FROM pages p
        LEFT JOIN links l ON l.to_page_id = p.id
+       LEFT JOIN pages f ON f.id = l.from_page_id
+       LEFT JOIN pages o ON o.id = l.origin_page_id
        WHERE p.slug = ANY($1::text[])
+       ${filters}
        GROUP BY p.slug`,
-      [slugs]
+      params
     );
     for (const r of rows as { slug: string; cnt: number }[]) {
       result.set(r.slug, Number(r.cnt));
@@ -4613,4 +4676,38 @@ function rowToCodeEdge(row: Record<string, unknown>): import('./types.ts').CodeE
     source_id: row.source_id == null ? null : (row.source_id as string),
     resolved: Boolean(row.resolved),
   };
+}
+
+function buildPgliteLinkScopeFilters(
+  opts: import('./engine.ts').LinkReadOpts | import('./engine.ts').BacklinkCountOpts | undefined,
+  params: unknown[],
+  seedAlias: string,
+  endpointAlias: string,
+  originAlias: string,
+): string {
+  let filter = '';
+  if (opts?.sourceIds && opts.sourceIds.length > 0) {
+    params.push(opts.sourceIds);
+    const idx = params.length;
+    filter += ` AND ${seedAlias}.source_id = ANY($${idx}::text[])`;
+    filter += ` AND ${endpointAlias}.source_id = ANY($${idx}::text[])`;
+    filter += ` AND (${originAlias}.id IS NULL OR ${originAlias}.source_id = ANY($${idx}::text[]))`;
+  } else if (opts?.sourceId) {
+    params.push(opts.sourceId);
+    const idx = params.length;
+    filter += ` AND ${seedAlias}.source_id = $${idx}`;
+    filter += ` AND ${endpointAlias}.source_id = $${idx}`;
+    filter += ` AND (${originAlias}.id IS NULL OR ${originAlias}.source_id = $${idx})`;
+  }
+
+  const readablePolicyIds = normalizeReadablePolicyIds(opts?.readablePolicyIds);
+  if (readablePolicyIds) {
+    if (readablePolicyIds.length === 0) return `${filter} AND FALSE`;
+    params.push(readablePolicyIds);
+    const idx = `$${params.length}`;
+    filter += ` ${buildReadablePolicyClause(seedAlias, idx)}`;
+    filter += ` ${buildReadablePolicyClause(endpointAlias, idx)}`;
+    filter += ` ${buildNullableReadablePolicyClause(originAlias, idx)}`;
+  }
+  return filter;
 }

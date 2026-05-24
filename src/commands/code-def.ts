@@ -15,9 +15,11 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
+import { buildReadablePolicyClause, normalizeReadablePolicyIds } from '../core/search/sql-ranking.ts';
 
 export interface CodeDefResult {
   slug: string;
+  source_id: string;
   file: string | null;
   language: string | null;
   symbol_type: string | null;
@@ -29,29 +31,35 @@ export interface CodeDefResult {
 export async function findCodeDef(
   engine: BrainEngine,
   symbol: string,
-  opts: { limit?: number; language?: string } = {},
+  opts: { limit?: number; language?: string; sourceId?: string; sourceIds?: string[]; readablePolicyIds?: string[] } = {},
 ): Promise<CodeDefResult[]> {
   const limit = opts.limit ?? 20;
   const DEF_TYPES = ['function', 'class', 'interface', 'type', 'enum', 'struct', 'trait', 'module', 'contract'];
-  const params: unknown[] = [symbol, limit];
+  const params: unknown[] = [symbol];
   let whereLang = '';
   if (opts.language) {
-    params.splice(1, 0, opts.language);
-    whereLang = 'AND cc.language = $2';
+    params.push(opts.language);
+    whereLang = `AND cc.language = $${params.length}`;
   }
+  const sourceFilter = buildCodeReadSourceFilter(opts, params);
+  const policyFilter = buildCodeReadPolicyFilter(opts.readablePolicyIds, params);
+  params.push(limit);
   // Deterministic ordering: exact type matches first (functions before
   // export_statement wrappers), then page slug, then line number.
   const rows = await engine.executeRaw<{
-    slug: string; file: string | null; language: string | null;
+    slug: string; source_id: string; file: string | null; language: string | null;
     symbol_type: string | null; start_line: number | null; end_line: number | null;
     chunk_text: string;
   }>(
-    `SELECT p.slug, (p.frontmatter->>'file') AS file, cc.language, cc.symbol_type,
+    `SELECT p.slug, p.source_id, (p.frontmatter->>'file') AS file, cc.language, cc.symbol_type,
             cc.start_line, cc.end_line, cc.chunk_text
      FROM content_chunks cc
      JOIN pages p ON p.id = cc.page_id
      WHERE cc.symbol_name = $1
        ${whereLang}
+       ${sourceFilter}
+       ${policyFilter}
+       AND p.deleted_at IS NULL
        AND p.page_kind = 'code'
        AND cc.symbol_type IN ('${DEF_TYPES.join("','")}', 'export statement')
      ORDER BY
@@ -66,6 +74,7 @@ export async function findCodeDef(
   );
   return rows.map((r) => ({
     slug: r.slug,
+    source_id: r.source_id,
     file: r.file,
     language: r.language,
     symbol_type: r.symbol_type,
@@ -74,6 +83,32 @@ export async function findCodeDef(
     // First 500 chars of chunk — enough for a preview without flooding output.
     snippet: r.chunk_text.slice(0, 500),
   }));
+}
+
+function buildCodeReadSourceFilter(
+  opts: { sourceId?: string; sourceIds?: string[] },
+  params: unknown[],
+): string {
+  if (opts.sourceIds && opts.sourceIds.length > 0) {
+    params.push(opts.sourceIds);
+    return `AND p.source_id = ANY($${params.length}::text[])`;
+  }
+  if (opts.sourceId) {
+    params.push(opts.sourceId);
+    return `AND p.source_id = $${params.length}`;
+  }
+  return '';
+}
+
+function buildCodeReadPolicyFilter(
+  readablePolicyIds: string[] | undefined,
+  params: unknown[],
+): string {
+  const normalized = normalizeReadablePolicyIds(readablePolicyIds);
+  if (!normalized) return '';
+  if (normalized.length === 0) return 'AND FALSE';
+  params.push(normalized);
+  return buildReadablePolicyClause('p', `$${params.length}`);
 }
 
 function parseFlag(args: string[], name: string): string | undefined {

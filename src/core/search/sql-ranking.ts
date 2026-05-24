@@ -148,10 +148,10 @@ export function normalizeReadablePolicyIds(policyIds: readonly string[] | undefi
  * readable policy ids. Callers are responsible for adding `AND FALSE` when
  * the normalized list is empty.
  */
-export function buildReadablePolicyClause(pageAlias: string, policyIdsParam: string): string {
+export function buildReadablePolicyCondition(pageAlias: string, policyIdsParam: string): string {
   const scalar = `${pageAlias}.frontmatter->>'visibility_policy_id'`;
   const many = `${pageAlias}.frontmatter->'visibility_policy_ids'`;
-  return `AND (
+  return `(
     ${scalar} = ANY(${policyIdsParam}::text[])
     OR EXISTS (
       SELECT 1
@@ -164,6 +164,14 @@ export function buildReadablePolicyClause(pageAlias: string, policyIdsParam: str
       WHERE readable_policy.policy_id = ANY(${policyIdsParam}::text[])
     )
   )`;
+}
+
+export function buildReadablePolicyClause(pageAlias: string, policyIdsParam: string): string {
+  return `AND ${buildReadablePolicyCondition(pageAlias, policyIdsParam)}`;
+}
+
+export function buildNullableReadablePolicyClause(pageAlias: string, policyIdsParam: string): string {
+  return `AND (${pageAlias}.id IS NULL OR ${buildReadablePolicyCondition(pageAlias, policyIdsParam)})`;
 }
 
 // ============================================================

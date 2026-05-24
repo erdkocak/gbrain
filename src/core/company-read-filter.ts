@@ -1,5 +1,5 @@
 import type { OperationContext } from './operations.ts';
-import type { Page, SearchOpts, SearchResult } from './types.ts';
+import type { CodeEdgeResult, Page, SearchOpts, SearchResult } from './types.ts';
 
 export interface CompanyReadScope {
   readablePolicyIds: Set<string>;
@@ -149,6 +149,34 @@ export async function filterReadablePageRefRows<T>(
   });
 }
 
+export async function filterReadableCodeEdges<T extends CodeEdgeResult>(
+  ctx: OperationContext,
+  edges: T[],
+): Promise<T[]> {
+  const scope = companyReadScope(ctx);
+  if (!scope || edges.length === 0) return edges;
+
+  const chunkIds = [...new Set(
+    edges
+      .flatMap((edge) => [edge.from_chunk_id, edge.to_chunk_id])
+      .filter((id): id is number => Number.isInteger(id)),
+  )];
+  const readableChunks = await readableChunkIds(ctx, scope, chunkIds);
+
+  const symbols = [...new Set(
+    edges.flatMap((edge) => [edge.from_symbol_qualified, edge.to_symbol_qualified])
+      .filter((symbol): symbol is string => typeof symbol === 'string' && symbol.trim().length > 0),
+  )];
+  const readableSymbols = await readableCodeSymbols(ctx, scope, symbols);
+
+  return edges.filter((edge) => {
+    if (!readableChunks.has(edge.from_chunk_id)) return false;
+    if (edge.to_chunk_id != null && !readableChunks.has(edge.to_chunk_id)) return false;
+    return readableSymbols.has(edge.from_symbol_qualified)
+      && readableSymbols.has(edge.to_symbol_qualified);
+  });
+}
+
 export async function filterReadableAnomalies<T extends { page_slugs: string[]; count: number; baseline_mean: number; baseline_stddev: number; sigma_observed: number }>(
   ctx: OperationContext,
   anomalies: T[],
@@ -223,6 +251,51 @@ async function readablePageRefs(
     rows
       .filter((row) => row.slug && row.source_id && rowIsReadable(scope, row))
       .map((row) => refKey(row.source_id as string, row.slug as string)),
+  );
+}
+
+async function readableChunkIds(
+  ctx: OperationContext,
+  scope: CompanyReadScope,
+  chunkIds: number[],
+): Promise<Set<number>> {
+  if (chunkIds.length === 0) return new Set();
+  const rows = await ctx.engine.executeRaw<PagePolicyRow & { chunk_id: number }>(
+    `SELECT cc.id AS chunk_id, p.id, p.slug, p.source_id, p.frontmatter
+       FROM content_chunks cc
+       JOIN pages p ON p.id = cc.page_id
+      WHERE cc.id = ANY($1::int[])
+        AND p.deleted_at IS NULL`,
+    [chunkIds],
+  );
+  return new Set(
+    rows
+      .filter((row) => rowIsReadable(scope, row))
+      .map((row) => Number(row.chunk_id)),
+  );
+}
+
+async function readableCodeSymbols(
+  ctx: OperationContext,
+  scope: CompanyReadScope,
+  symbols: string[],
+  sourceId?: string,
+): Promise<Set<string>> {
+  if (symbols.length === 0) return new Set();
+  const sourceIds = sourceId ? [sourceId] : [...scope.allowedSourceIds];
+  const rows = await ctx.engine.executeRaw<PagePolicyRow & { symbol_name_qualified: string }>(
+    `SELECT DISTINCT cc.symbol_name_qualified, p.id, p.slug, p.source_id, p.frontmatter
+       FROM content_chunks cc
+       JOIN pages p ON p.id = cc.page_id
+      WHERE cc.symbol_name_qualified = ANY($1::text[])
+        AND p.source_id = ANY($2::text[])
+        AND p.deleted_at IS NULL`,
+    [symbols, sourceIds],
+  );
+  return new Set(
+    rows
+      .filter((row) => row.symbol_name_qualified && rowIsReadable(scope, row))
+      .map((row) => row.symbol_name_qualified),
   );
 }
 

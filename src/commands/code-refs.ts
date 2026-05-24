@@ -20,9 +20,11 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
+import { buildReadablePolicyClause, normalizeReadablePolicyIds } from '../core/search/sql-ranking.ts';
 
 export interface CodeRefResult {
   slug: string;
+  source_id: string;
   file: string | null;
   language: string | null;
   symbol_name: string | null;
@@ -35,7 +37,7 @@ export interface CodeRefResult {
 export async function findCodeRefs(
   engine: BrainEngine,
   symbol: string,
-  opts: { limit?: number; language?: string } = {},
+  opts: { limit?: number; language?: string; sourceId?: string; sourceIds?: string[]; readablePolicyIds?: string[] } = {},
 ): Promise<CodeRefResult[]> {
   const limit = opts.limit ?? 50;
   const params: unknown[] = [`%${symbol}%`];
@@ -44,14 +46,16 @@ export async function findCodeRefs(
     params.push(opts.language);
     whereLang = `AND cc.language = $${params.length}`;
   }
+  const sourceFilter = buildCodeReadSourceFilter(opts, params);
+  const policyFilter = buildCodeReadPolicyFilter(opts.readablePolicyIds, params);
   params.push(limit);
   const rows = await engine.executeRaw<{
-    slug: string; file: string | null; language: string | null;
+    slug: string; source_id: string; file: string | null; language: string | null;
     symbol_name: string | null; symbol_type: string | null;
     start_line: number | null; end_line: number | null;
     chunk_text: string;
   }>(
-    `SELECT p.slug, (p.frontmatter->>'file') AS file, cc.language,
+    `SELECT p.slug, p.source_id, (p.frontmatter->>'file') AS file, cc.language,
             cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line,
             cc.chunk_text
      FROM content_chunks cc
@@ -59,12 +63,16 @@ export async function findCodeRefs(
      WHERE p.page_kind = 'code'
        AND cc.chunk_text ILIKE $1
        ${whereLang}
+       ${sourceFilter}
+       ${policyFilter}
+       AND p.deleted_at IS NULL
      ORDER BY p.slug, cc.start_line NULLS LAST
      LIMIT $${params.length}`,
     params,
   );
   return rows.map((r) => ({
     slug: r.slug,
+    source_id: r.source_id,
     file: r.file,
     language: r.language,
     symbol_name: r.symbol_name,
@@ -73,6 +81,32 @@ export async function findCodeRefs(
     end_line: r.end_line,
     snippet: r.chunk_text.slice(0, 500),
   }));
+}
+
+function buildCodeReadSourceFilter(
+  opts: { sourceId?: string; sourceIds?: string[] },
+  params: unknown[],
+): string {
+  if (opts.sourceIds && opts.sourceIds.length > 0) {
+    params.push(opts.sourceIds);
+    return `AND p.source_id = ANY($${params.length}::text[])`;
+  }
+  if (opts.sourceId) {
+    params.push(opts.sourceId);
+    return `AND p.source_id = $${params.length}`;
+  }
+  return '';
+}
+
+function buildCodeReadPolicyFilter(
+  readablePolicyIds: string[] | undefined,
+  params: unknown[],
+): string {
+  const normalized = normalizeReadablePolicyIds(readablePolicyIds);
+  if (!normalized) return '';
+  if (normalized.length === 0) return 'AND FALSE';
+  params.push(normalized);
+  return buildReadablePolicyClause('p', `$${params.length}`);
 }
 
 function parseFlag(args: string[], name: string): string | undefined {

@@ -59,7 +59,29 @@ export interface SourceRow {
 export interface TraverseGraphOpts {
   sourceId?: string;
   sourceIds?: string[];
+  readablePolicyIds?: string[];
   frontierCap?: number;
+}
+
+export interface TraversePathsOpts {
+  depth?: number;
+  linkType?: string;
+  direction?: 'in' | 'out' | 'both';
+  sourceId?: string;
+  sourceIds?: string[];
+  readablePolicyIds?: string[];
+}
+
+export interface LinkReadOpts {
+  sourceId?: string;
+  sourceIds?: string[];
+  readablePolicyIds?: string[];
+}
+
+export interface BacklinkCountOpts {
+  sourceId?: string;
+  sourceIds?: string[];
+  readablePolicyIds?: string[];
 }
 
 export interface FileRow {
@@ -883,12 +905,12 @@ export interface BrainEngine {
    * engines). When set, the from-page filter becomes
    * `WHERE f.slug = $1 AND f.source_id = $X`.
    */
-  getLinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]>;
+  getLinks(slug: string, opts?: LinkReadOpts): Promise<Link[]>;
   /**
    * v0.31.8 (D12 + D16): same `opts.sourceId` semantics as `getLinks`,
    * applied to the to-page side of the join.
    */
-  getBacklinks(slug: string, opts?: { sourceId?: string }): Promise<Link[]>;
+  getBacklinks(slug: string, opts?: LinkReadOpts): Promise<Link[]>;
   /**
    * Fuzzy-match a display name to a page slug using pg_trgm similarity.
    * Zero embedding cost, zero LLM cost — designed for the v0.13 resolver used
@@ -931,14 +953,14 @@ export interface BrainEngine {
    */
   traversePaths(
     slug: string,
-    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[] },
+    opts?: TraversePathsOpts,
   ): Promise<GraphPath[]>;
   /**
    * For a list of slugs, return how many inbound links each has.
    * Used by hybrid search backlink boost. Single SQL query, not N+1.
    * Slugs with zero inbound links are present in the map with value 0.
    */
-  getBacklinkCounts(slugs: string[]): Promise<Map<string, number>>;
+  getBacklinkCounts(slugs: string[], opts?: BacklinkCountOpts): Promise<Map<string, number>>;
   /**
    * v0.27.0: for a list of slugs, return their updated_at timestamps (or created_at fallback).
    * Used by hybrid search recency boost. Single SQL query, not N+1.

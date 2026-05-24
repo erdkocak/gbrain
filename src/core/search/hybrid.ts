@@ -224,6 +224,9 @@ export interface PostFusionOpts {
   applyBacklinks: boolean;
   salience: 'off' | 'on' | 'strong';
   recency: 'off' | 'on' | 'strong';
+  sourceId?: string;
+  sourceIds?: string[];
+  readablePolicyIds?: string[];
   decayMap?: import('./recency-decay.ts').RecencyDecayMap;
   fallback?: import('./recency-decay.ts').RecencyDecayConfig;
   /**
@@ -263,7 +266,11 @@ export async function runPostFusionStages(
   if (opts.applyBacklinks) {
     try {
       const slugs = Array.from(new Set(results.map(r => r.slug)));
-      const counts = await engine.getBacklinkCounts(slugs);
+      const counts = await engine.getBacklinkCounts(slugs, {
+        sourceId: opts.sourceId,
+        sourceIds: opts.sourceIds,
+        readablePolicyIds: opts.readablePolicyIds,
+      });
       applyBacklinkBoost(results, counts, floorThreshold);
     } catch {
       // Non-fatal; preserves the existing pre-v0.29.1 contract.
@@ -505,6 +512,9 @@ export async function hybridSearch(
     applyBacklinks: true,
     salience: salienceMode,
     recency: recencyMode,
+    sourceId: opts?.sourceId,
+    sourceIds: opts?.sourceIds,
+    readablePolicyIds: opts?.readablePolicyIds,
     // v0.35.6.0 — floor-ratio gate threaded from resolved mode. Default
     // undefined for all 3 bundles → no behavior change unless caller sets
     // SearchOpts.floorRatio or `search.floor_ratio` config key.
