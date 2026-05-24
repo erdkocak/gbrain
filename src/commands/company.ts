@@ -31,6 +31,17 @@ import {
   buildCompanyHostedSurfaceConfig,
   type CompanyHostedSurfaceConfig,
 } from '../core/company-hosted-surface.ts';
+import {
+  CompanyPolicyInspectError,
+  inspectCompanyPolicyGrants,
+  inspectCompanyPolicySeed,
+  previewCompanyPolicyRequestContext,
+  COMPANY_POLICY_INSPECTION_GUARDRAIL,
+  type CompanyPolicyGrantInspection,
+  type CompanyPolicySeedInspection,
+  type CompanyRequestContextPreview,
+  type CompanyRequestContextPreviewInput,
+} from '../core/company-policy-inspect.ts';
 import { isAvailable } from '../core/ai/gateway.ts';
 
 const HELP = `Usage:
@@ -42,6 +53,9 @@ const HELP = `Usage:
   gbrain company decisions [question terms] [options]
   gbrain company follow-up draft [options]
   gbrain company hosted-surface [options]
+  gbrain company policy seed [options]
+  gbrain company policy grants <user-id> [options]
+  gbrain company policy context [identity options]
 
 Stage 1C-1F local/manual company memory for a trusted workspace pilot.
 Ingest writes meeting, doc, and evidence pages with file provenance. Extract
@@ -50,7 +64,8 @@ meeting/doc pages. Query answers from company layout pages with citations to
 meetings, docs, and evidence. Follow-up drafting produces local drafts only;
 it does not send email, post messages, create tickets, run webhooks, invoke
 subagents, or execute external actions. Hosted skill exposure is deny-by-
-default for trusted pilot clients only.
+default for trusted pilot clients only. Stage 2 policies are represented and
+resolvable for local/admin inspection, but not fully enforced until Stage 3.
 These commands do not start live integrations, cron, webhooks, background
 connectors, hosted write access, query cache, hot-memory, code-intelligence
 reads, analytics reads, or dream-cycle outputs.
@@ -82,6 +97,18 @@ Follow-up options:
   --limit N              Max follow-up drafts (1-100, default: 10)
   --include-closed       Include completed/closed action and commitment pages
 
+Policy inspection options:
+  --user-id ID           Preview/evaluate a company policy user
+  --email EMAIL          Resolve request identity by email
+  --idp-subject VALUE    Resolve request identity by IdP/OAuth subject
+  --client-id ID         Preview hosted OAuth client identity mapping
+  --client-name NAME     Preview hosted OAuth client-name mapping
+  --local                Preview trusted local CLI context
+  --remote               Preview remote/MCP context (default)
+  --request-id ID        Override preview request id
+  --session-id ID        Include a preview session id
+  --allowed-source ID    Repeatable; comma-separated values also accepted
+
 Common options:
   --source-id ID         Override company primary source (default: company)
   --json                 JSON receipt/result
@@ -106,6 +133,9 @@ type Parsed =
   | ({ kind: 'retrieve'; input: CompanyRetrieveInput; json: boolean })
   | ({ kind: 'followup'; input: CompanyFollowUpInput; json: boolean })
   | ({ kind: 'hosted-surface'; json: boolean })
+  | ({ kind: 'policy-seed'; sourceId: string | undefined; json: boolean })
+  | ({ kind: 'policy-grants'; userId: string; sourceId: string | undefined; json: boolean })
+  | ({ kind: 'policy-context'; input: CompanyRequestContextPreviewInput; json: boolean })
   | { help: true };
 
 export async function runCompany(engine: BrainEngine | null, args: string[]): Promise<void> {
@@ -138,11 +168,25 @@ export async function runCompany(engine: BrainEngine | null, args: string[]): Pr
     } else if (parsed.kind === 'followup') {
       const result = await draftCompanyFollowUp(engine, parsed.input);
       printFollowUpResult(result, parsed.json);
-    } else {
+    } else if (parsed.kind === 'hosted-surface') {
       const result = buildCompanyHostedSurfaceConfig();
       printHostedSurfaceResult(result, parsed.json);
+    } else if (parsed.kind === 'policy-seed') {
+      const result = await inspectCompanyPolicySeed(engine, { sourceId: parsed.sourceId });
+      printPolicySeedInspection(result, parsed.json);
+    } else if (parsed.kind === 'policy-grants') {
+      const result = await inspectCompanyPolicyGrants(engine, { userId: parsed.userId, sourceId: parsed.sourceId });
+      printPolicyGrantInspection(result, parsed.json);
+    } else {
+      const result = await previewCompanyPolicyRequestContext(engine, parsed.input);
+      printPolicyContextPreview(result, parsed.json);
     }
   } catch (e) {
+    if (e instanceof CompanyPolicyInspectError) {
+      console.error(`gbrain company: ${e.message}`);
+      console.error(`gbrain company: ${COMPANY_POLICY_INSPECTION_GUARDRAIL}`);
+      process.exit(1);
+    }
     if (
       e instanceof CompanyIngestError
       || e instanceof CompanyExtractError
@@ -185,9 +229,12 @@ function parseArgs(args: string[]): Parsed {
     }
     return { kind: 'hosted-surface', json: base.json };
   }
+  if (group === 'policy' || group === 'policies') {
+    return parsePolicy([subcommand, ...rest].filter((v): v is string => typeof v === 'string'));
+  }
 
   if (group !== 'ingest' || (subcommand !== 'meeting' && subcommand !== 'doc')) {
-    console.error('Usage: gbrain company <ingest|extract|query|decisions|follow-up|hosted-surface> ...');
+    console.error('Usage: gbrain company <ingest|extract|query|decisions|follow-up|hosted-surface|policy> ...');
     console.error('Run `gbrain company --help` for details.');
     process.exit(2);
   }
@@ -424,6 +471,96 @@ function parseFollowUp(args: string[]): { input: CompanyFollowUpInput; json: boo
   };
 }
 
+function parsePolicy(args: string[]): Parsed {
+  const action = args[0];
+  if (action === 'seed') {
+    const commandArgs = args.slice(1);
+    const base = parsePolicyBase(commandArgs);
+    const positional = collectPolicyPositionals(commandArgs);
+    if (positional.length > 0) {
+      console.error('Usage: gbrain company policy seed [--source-id ID] [--json]');
+      process.exit(2);
+    }
+    return { kind: 'policy-seed', sourceId: base.sourceId, json: base.json };
+  }
+
+  if (action === 'grants' || action === 'grant' || action === 'user') {
+    const commandArgs = args.slice(1);
+    const base = parsePolicyBase(commandArgs);
+    const positional: string[] = [];
+    let userId: string | undefined;
+    for (let i = 0; i < commandArgs.length; i++) {
+      const a = commandArgs[i]!;
+      const consumed = consumePolicyBaseFlag(commandArgs, i);
+      if (consumed !== null) { i += consumed; continue; }
+      if (a === '--user-id') { userId = requireValue(commandArgs, ++i, a); continue; }
+      if (a.startsWith('--')) unknownFlag(a);
+      positional.push(a);
+    }
+    if (positional.length > 1 || (userId && positional.length > 0)) {
+      console.error('Usage: gbrain company policy grants <user-id> [--source-id ID] [--json]');
+      process.exit(2);
+    }
+    const resolvedUserId = userId ?? positional[0];
+    if (!resolvedUserId) {
+      console.error('Usage: gbrain company policy grants <user-id> [--source-id ID] [--json]');
+      process.exit(2);
+    }
+    return { kind: 'policy-grants', userId: resolvedUserId, sourceId: base.sourceId, json: base.json };
+  }
+
+  if (action === 'context' || action === 'request-context' || action === 'preview') {
+    const commandArgs = args.slice(1);
+    const base = parsePolicyBase(commandArgs);
+    const positional: string[] = [];
+    const allowedSources: string[] = [];
+    let requestId: string | undefined;
+    let sessionId: string | undefined;
+    let remote = true;
+    const identity: CompanyRequestContextPreviewInput['identity'] = {};
+
+    for (let i = 0; i < commandArgs.length; i++) {
+      const a = commandArgs[i]!;
+      const consumed = consumePolicyBaseFlag(commandArgs, i);
+      if (consumed !== null) { i += consumed; continue; }
+      if (a === '--user-id') { identity.userId = requireValue(commandArgs, ++i, a); continue; }
+      if (a === '--email') { identity.email = requireValue(commandArgs, ++i, a); continue; }
+      if (a === '--idp-subject') { identity.idpSubject = requireValue(commandArgs, ++i, a); continue; }
+      if (a === '--client-id') { identity.clientId = requireValue(commandArgs, ++i, a); continue; }
+      if (a === '--client-name') { identity.clientName = requireValue(commandArgs, ++i, a); continue; }
+      if (a === '--request-id') { requestId = requireValue(commandArgs, ++i, a); continue; }
+      if (a === '--session-id') { sessionId = requireValue(commandArgs, ++i, a); continue; }
+      if (a === '--allowed-source' || a === '--allowed-sources') {
+        allowedSources.push(...splitList(requireValue(commandArgs, ++i, a)));
+        continue;
+      }
+      if (a === '--local') { remote = false; continue; }
+      if (a === '--remote') { remote = true; continue; }
+      if (a.startsWith('--')) unknownFlag(a);
+      positional.push(a);
+    }
+    if (positional.length > 0) {
+      console.error('Usage: gbrain company policy context [identity options] [--source-id ID] [--json]');
+      process.exit(2);
+    }
+    return {
+      kind: 'policy-context',
+      input: {
+        sourceId: base.sourceId,
+        requestId,
+        sessionId,
+        remote,
+        allowedSources: allowedSources.length > 0 ? allowedSources : undefined,
+        identity,
+      },
+      json: base.json,
+    };
+  }
+
+  console.error('Usage: gbrain company policy <seed|grants|context> ...');
+  process.exit(2);
+}
+
 function parseBase(args: string[]): ParsedBase {
   const base: ParsedBase = {
     json: false,
@@ -441,11 +578,40 @@ function parseBase(args: string[]): ParsedBase {
   return base;
 }
 
+function parsePolicyBase(args: string[]): Pick<ParsedBase, 'json' | 'sourceId'> {
+  const base = { json: false, sourceId: undefined as string | undefined };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === '--json') { base.json = true; continue; }
+    if (a === '--source-id') { base.sourceId = requireValue(args, ++i, a); continue; }
+  }
+  return base;
+}
+
 function consumeBaseFlag(args: string[], index: number): number | null {
   const a = args[index];
   if (a === '--json' || a === '--no-embed') return 0;
   if (a === '--source-id' || a === '--created-by') return 1;
   return null;
+}
+
+function consumePolicyBaseFlag(args: string[], index: number): number | null {
+  const a = args[index];
+  if (a === '--json') return 0;
+  if (a === '--source-id') return 1;
+  return null;
+}
+
+function collectPolicyPositionals(args: string[]): string[] {
+  const positional: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    const consumed = consumePolicyBaseFlag(args, i);
+    if (consumed !== null) { i += consumed; continue; }
+    if (a.startsWith('--')) unknownFlag(a);
+    positional.push(a);
+  }
+  return positional;
 }
 
 function requireValue(args: string[], index: number, flag: string): string {
@@ -577,4 +743,65 @@ function printHostedSurfaceResult(result: CompanyHostedSurfaceConfig, json: bool
     console.log(`    - ${surface}`);
   }
   console.log('  note: trusted pilot clients only; normal secure users still need Stage 3 policy enforcement');
+}
+
+function printPolicySeedInspection(result: CompanyPolicySeedInspection, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log('company policy seed inspection (trusted workspace pilot):');
+  console.log(`  source:          ${result.source_id}`);
+  console.log(`  policy version:  ${result.policy_metadata?.policy_version ?? '(missing metadata)'}`);
+  console.log(`  policy hash:     ${result.policy_metadata?.policy_hash ?? '(missing metadata)'}`);
+  console.log(`  default:         ${result.policy_storage.default_policy_id} (${result.policy_storage.default_decision})`);
+  console.log(`  users:           ${result.policy_storage.active_users}/${result.policy_storage.users} active`);
+  console.log(`  groups:          ${result.policy_storage.groups}`);
+  console.log(`  policies:        ${result.policy_storage.policies}`);
+  console.log(`  grants:          ${result.policy_storage.grants}`);
+  console.log(`  path defaults:   ${result.policy_storage.path_defaults}`);
+  console.log(`  hosted skills:   ${result.surface_summary.hosted_skill_default} by default`);
+  console.log(`  object policy:   ${result.surface_summary.object_policy_stage}`);
+  console.log(`  guardrail:       ${result.guardrail}`);
+}
+
+function printPolicyGrantInspection(result: CompanyPolicyGrantInspection, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log('company policy grant inspection (trusted workspace pilot):');
+  console.log(`  source:     ${result.source_id}`);
+  console.log(`  user:       ${result.user_id}`);
+  console.log(`  known:      ${result.effective_grants.known_user ? 'yes' : 'no'}`);
+  console.log(`  active:     ${result.effective_grants.active_user ? 'yes' : 'no'}`);
+  console.log(`  groups:     ${formatList(result.effective_grants.group_ids)}`);
+  console.log(`  readable:   ${formatList(result.effective_grants.readable_policy_ids)}`);
+  console.log(`  writable:   ${formatList(result.effective_grants.writable_policy_ids)}`);
+  console.log(`  decision:   ${result.effective_grants.default_decision} by default`);
+  console.log(`  guardrail:  ${result.guardrail}`);
+}
+
+function printPolicyContextPreview(result: CompanyRequestContextPreview, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  const ctx = result.request_context;
+  console.log('company request-context preview (trusted workspace pilot):');
+  console.log(`  source:        ${result.source_id}`);
+  console.log(`  request id:    ${ctx.requestId}`);
+  console.log(`  transport:     ${ctx.transport}`);
+  console.log(`  identity:      ${ctx.identityStatus} via ${ctx.identitySource}`);
+  console.log(`  user:          ${ctx.userId ?? '(none)'}`);
+  console.log(`  groups:        ${formatList(ctx.groupIds)}`);
+  console.log(`  readable:      ${formatList(ctx.readablePolicyIds)}`);
+  console.log(`  writable:      ${formatList(ctx.writablePolicyIds)}`);
+  console.log(`  policy id:     ${ctx.policyDecisionId}`);
+  console.log(`  enforcement:   ${ctx.enforcement}`);
+  console.log(`  guardrail:     ${result.guardrail}`);
+}
+
+function formatList(values: readonly string[]): string {
+  return values.length > 0 ? values.join(', ') : '(none)';
 }

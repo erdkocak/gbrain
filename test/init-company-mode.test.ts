@@ -132,6 +132,44 @@ describe('gbrain init --company', () => {
       expect(objectPolicy.exitCode).toBe(0);
       expect(JSON.parse(objectPolicy.stdout).enforcement).toBe('not_enforced_stage_2d');
 
+      const companyHelp = await runCli(['company', '--help'], home);
+      expect(companyHelp.exitCode).toBe(0);
+      expect(companyHelp.stdout).toContain('gbrain company policy seed');
+      expect(companyHelp.stdout).toContain('not fully enforced until Stage 3');
+
+      const policySeedInspect = await runCli(['company', 'policy', 'seed', '--json'], home);
+      expect(policySeedInspect.exitCode).toBe(0);
+      const policySeedParsed = JSON.parse(policySeedInspect.stdout);
+      expect(policySeedParsed.stage).toBe('stage_2e_policy_inspection_not_enforced');
+      expect(policySeedParsed.guardrail).toContain('not fully enforced until Stage 3');
+      expect(policySeedParsed.policy_storage.default_decision).toBe('deny');
+      expect(policySeedParsed.policy_storage.enforcement).toBe('not_enforced_stage_2a');
+      expect(policySeedParsed.surface_summary.hosted_skill_default).toBe('deny');
+      expect(policySeedParsed.hosted_surface.disabled_surfaces).toContain('direct_db_credentials_for_normal_secure_users');
+      expect(policySeedParsed.hosted_surface.disabled_surfaces).toContain('hosted_writes_for_normal_users');
+
+      const policyGrants = await runCli(['company', 'policy', 'grants', 'company-pilot-user', '--json'], home);
+      expect(policyGrants.exitCode).toBe(0);
+      const policyGrantsParsed = JSON.parse(policyGrants.stdout);
+      expect(policyGrantsParsed.guardrail).toContain('not fully enforced until Stage 3');
+      expect(policyGrantsParsed.effective_grants.known_user).toBe(true);
+      expect(policyGrantsParsed.effective_grants.group_ids).toEqual(['company-pilot-admins']);
+      expect(policyGrantsParsed.effective_grants.readable_policy_ids).toEqual(['company-trusted-workspace']);
+      expect(policyGrantsParsed.effective_grants.writable_policy_ids).toEqual(['company-trusted-workspace']);
+
+      const policyContext = await runCli(['company', 'policy', 'context', '--user-id', 'company-pilot-user', '--json'], home);
+      expect(policyContext.exitCode).toBe(0);
+      const policyContextParsed = JSON.parse(policyContext.stdout);
+      expect(policyContextParsed.guardrail).toContain('not fully enforced until Stage 3');
+      expect(policyContextParsed.request_context.identityStatus).toBe('resolved');
+      expect(policyContextParsed.request_context.userId).toBe('company-pilot-user');
+      expect(policyContextParsed.request_context.readablePolicyIds).toEqual(['company-trusted-workspace']);
+      expect(policyContextParsed.request_context.sourceRouting.independentOfPolicyGrants).toBe(true);
+
+      const policyContextHuman = await runCli(['company', 'policy', 'context', '--user-id', 'company-pilot-user'], home);
+      expect(policyContextHuman.exitCode).toBe(0);
+      expect(policyContextHuman.stdout).toContain('not fully enforced until Stage 3');
+
       const layout = await runCli(['config', 'get', 'company.layout'], home);
       expect(layout.exitCode).toBe(0);
       expect(JSON.parse(layout.stdout).templates.action.frontmatter.type).toBe('action');

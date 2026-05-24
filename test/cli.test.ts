@@ -211,6 +211,8 @@ describe('CLI dispatch integration', () => {
       expect(stdout).toContain('gbrain company query');
       expect(stdout).toContain('gbrain company follow-up draft');
       expect(stdout).toContain('gbrain company hosted-surface');
+      expect(stdout).toContain('gbrain company policy seed');
+      expect(stdout).toContain('not fully enforced until Stage 3');
       expect(stdout).toContain('trusted workspace pilot');
       expect(stdout).toContain('do not start live integrations');
       expect(stdout).toContain('does not send email');
