@@ -65,6 +65,9 @@ describe('gbrain init --company', () => {
       expect(parsed.company.policy.seed.policies[0].id).toBe('company-trusted-workspace');
       expect(parsed.company.policy.metadata.enforcement).toBe('not_enforced_stage_2a');
       expect(parsed.company.policy.metadata.default_decision).toBe('deny');
+      expect(parsed.company.object_policy.stage).toBe('stage_2d_object_metadata_not_enforced');
+      expect(parsed.company.object_policy.enforcement).toBe('not_enforced_stage_2d');
+      expect(parsed.company.object_policy.page_metadata_store).toBe('pages.frontmatter');
       expect(parsed.company.metadata_placeholders.visibility_policy_id).toBeNull();
       expect(parsed.company.schema_pack).toBe('gbrain-company');
       expect(parsed.company.layout.path_defaults.map((entry: any) => entry.object_type)).toEqual([
@@ -91,6 +94,7 @@ describe('gbrain init --company', () => {
       expect(cfg.company.hosted_surface.disabled_surfaces).toContain('follow_up_external_execution');
       expect(cfg.company.policy.seed.path_defaults[0].visibility_policy_id).toBe('company-trusted-workspace');
       expect(cfg.company.policy.metadata.enforcement).toBe('not_enforced_stage_2a');
+      expect(cfg.company.object_policy.related_storage_plan.map((entry: any) => entry.surface)).toContain('content_chunks');
 
       const mode = await runCli(['config', 'get', 'company.mode'], home);
       expect(mode.exitCode).toBe(0);
@@ -123,6 +127,10 @@ describe('gbrain init --company', () => {
       const policyEnforcement = await runCli(['config', 'get', 'company.policy.enforcement'], home);
       expect(policyEnforcement.exitCode).toBe(0);
       expect(policyEnforcement.stdout.trim()).toBe('not_enforced_stage_2a');
+
+      const objectPolicy = await runCli(['config', 'get', 'company.object_policy'], home);
+      expect(objectPolicy.exitCode).toBe(0);
+      expect(JSON.parse(objectPolicy.stdout).enforcement).toBe('not_enforced_stage_2d');
 
       const layout = await runCli(['config', 'get', 'company.layout'], home);
       expect(layout.exitCode).toBe(0);

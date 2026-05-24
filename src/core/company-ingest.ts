@@ -8,14 +8,19 @@ import { importFromContent } from './import-file.ts';
 import { serializeMarkdown } from './markdown.ts';
 import { slugifySegment } from './sync.ts';
 import {
-  COMPANY_DEFAULT_POLICY_ID,
   COMPANY_SCHEMA_PACK_NAME,
+  type CompanyObjectType,
 } from './company-layout.ts';
 import {
   COMPANY_MODE_KIND,
   COMPANY_PRIMARY_SOURCE_ID,
   COMPANY_TRUST_MODE,
 } from './company-mode.ts';
+import {
+  assignCompanyObjectPolicyMetadata,
+  loadCompanyPolicyStorageForObjectMetadata,
+} from './company-object-policy.ts';
+import type { CompanyPolicyStorage } from './company-policy.ts';
 
 export const COMPANY_MANUAL_INGEST_KIND = 'company-manual';
 export const COMPANY_INGEST_TEXT_EXTENSIONS = ['.txt', '.md', '.markdown'] as const;
@@ -114,6 +119,7 @@ interface WorkspaceContext {
   capturedAt: string;
   createdBy: string | null;
   noEmbed: boolean;
+  policyStorage: CompanyPolicyStorage | null;
 }
 
 export async function ingestCompanyMeeting(
@@ -141,12 +147,13 @@ export async function ingestCompanyMeeting(
   const linkedDocs = linkedDocResults.map((result) => result.doc);
 
   const evidenceContent = buildEvidenceMarkdown({
+    slug: evidenceSlug,
     title: `Transcript evidence: ${title}`,
     evidenceType: 'transcript',
     sourceFile: transcript,
     capturedAt: ctx.capturedAt,
     supports: [meetingSlug],
-    createdBy: ctx.createdBy,
+    ctx,
   });
 
   const meetingEvidence = await importCompanyPage(engine, {
@@ -162,6 +169,7 @@ export async function ingestCompanyMeeting(
   });
 
   const meetingContent = buildMeetingMarkdown({
+    slug: meetingSlug,
     title,
     eventDate,
     transcript,
@@ -169,7 +177,7 @@ export async function ingestCompanyMeeting(
     projects: input.projects ?? [],
     linkedDocSlugs: linkedDocs.map((d) => d.slug),
     evidenceRefs: [meetingEvidence.slug],
-    createdBy: ctx.createdBy,
+    ctx,
     capturedAt: ctx.capturedAt,
   });
 
@@ -215,12 +223,13 @@ async function ingestCompanyDocInternal(
   const evidenceSlug = evidenceSlugFor(date, 'doc', title, file.baseSlug);
 
   const evidenceContent = buildEvidenceMarkdown({
+    slug: evidenceSlug,
     title: `Document evidence: ${title}`,
     evidenceType: 'linked_doc',
     sourceFile: file,
     capturedAt: ctx.capturedAt,
     supports: [docSlug, ...(input.linkedMeetingSlug ? [input.linkedMeetingSlug] : [])],
-    createdBy: ctx.createdBy,
+    ctx,
   });
   const evidence = await importCompanyPage(engine, {
     sourceId: ctx.sourceId,
@@ -235,12 +244,13 @@ async function ingestCompanyDocInternal(
   });
 
   const docContent = buildDocMarkdown({
+    slug: docSlug,
     title,
     file,
     projects: input.projects ?? [],
     linkedMeetingSlug: input.linkedMeetingSlug,
     evidenceRefs: [evidence.slug],
-    createdBy: ctx.createdBy,
+    ctx,
     capturedAt: ctx.capturedAt,
   });
   const doc = await importCompanyPage(engine, {
@@ -298,6 +308,7 @@ async function resolveCompanyWorkspace(
     capturedAt: now.toISOString(),
     createdBy: input.createdBy ?? null,
     noEmbed: input.noEmbed ?? false,
+    policyStorage: await loadCompanyPolicyStorageForObjectMetadata(engine),
   };
 }
 
@@ -369,18 +380,20 @@ function evidenceSlugFor(date: string, kind: string, title: string, fallback: st
 }
 
 function baseFrontmatter(
-  createdBy: string | null,
+  ctx: WorkspaceContext,
+  objectType: CompanyObjectType,
+  slug: string,
   derivedFrom: string[],
   evidenceRefs: string[],
 ): Record<string, unknown> {
-  return {
-    visibility_policy_id: COMPANY_DEFAULT_POLICY_ID,
-    created_by: createdBy,
-    derived_from: derivedFrom,
-    evidence_refs: evidenceRefs,
-    trusted_workspace_artifact: true,
-    policy_enforcement: 'deferred',
-  };
+  return assignCompanyObjectPolicyMetadata({}, {
+    objectType,
+    slug,
+    storage: ctx.policyStorage,
+    createdBy: ctx.createdBy,
+    derivedFrom,
+    evidenceRefs,
+  });
 }
 
 function markdownLinkList(slugs: string[]): string {
@@ -389,6 +402,7 @@ function markdownLinkList(slugs: string[]): string {
 }
 
 function buildMeetingMarkdown(input: {
+  slug: string;
   title: string;
   eventDate: string;
   transcript: SourceFile;
@@ -396,11 +410,11 @@ function buildMeetingMarkdown(input: {
   projects: string[];
   linkedDocSlugs: string[];
   evidenceRefs: string[];
-  createdBy: string | null;
+  ctx: WorkspaceContext;
   capturedAt: string;
 }): string {
   const frontmatter = {
-    ...baseFrontmatter(input.createdBy, input.evidenceRefs, input.evidenceRefs),
+    ...baseFrontmatter(input.ctx, 'meeting', input.slug, input.evidenceRefs, input.evidenceRefs),
     event_date: input.eventDate,
     attendees: input.attendees,
     projects: input.projects,
@@ -437,16 +451,17 @@ function buildMeetingMarkdown(input: {
 }
 
 function buildDocMarkdown(input: {
+  slug: string;
   title: string;
   file: SourceFile;
   projects: string[];
   linkedMeetingSlug?: string;
   evidenceRefs: string[];
-  createdBy: string | null;
+  ctx: WorkspaceContext;
   capturedAt: string;
 }): string {
   const frontmatter = {
-    ...baseFrontmatter(input.createdBy, input.evidenceRefs, input.evidenceRefs),
+    ...baseFrontmatter(input.ctx, 'doc', input.slug, input.evidenceRefs, input.evidenceRefs),
     doc_status: 'captured',
     source_ref: input.file.uri,
     source_file: input.file.absPath,
@@ -483,15 +498,16 @@ function buildDocMarkdown(input: {
 }
 
 function buildEvidenceMarkdown(input: {
+  slug: string;
   title: string;
   evidenceType: 'transcript' | 'linked_doc';
   sourceFile: SourceFile;
   capturedAt: string;
   supports: string[];
-  createdBy: string | null;
+  ctx: WorkspaceContext;
 }): string {
   const frontmatter = {
-    ...baseFrontmatter(input.createdBy, [], []),
+    ...baseFrontmatter(input.ctx, 'evidence', input.slug, [], []),
     evidence_type: input.evidenceType,
     source_ref: input.sourceFile.uri,
     source_file: input.sourceFile.absPath,

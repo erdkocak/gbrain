@@ -6,6 +6,11 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { applyCompanyModeSkeleton } from '../src/core/company-mode.ts';
 import { applyCompanyLayout, COMPANY_DEFAULT_POLICY_ID } from '../src/core/company-layout.ts';
+import { applyCompanyPolicySeed } from '../src/core/company-policy.ts';
+import {
+  COMPANY_OBJECT_POLICY_ENFORCEMENT,
+  COMPANY_OBJECT_POLICY_STAGE,
+} from '../src/core/company-object-policy.ts';
 import { ingestCompanyDoc, ingestCompanyMeeting } from '../src/core/company-ingest.ts';
 import {
   CompanyExtractError,
@@ -30,6 +35,7 @@ beforeEach(async () => {
   await resetPgliteState(engine);
   await applyCompanyModeSkeleton(engine);
   await applyCompanyLayout(engine);
+  await applyCompanyPolicySeed(engine);
   tmp = mkdtempSync(join(tmpdir(), 'gbrain-company-extract-'));
 });
 
@@ -85,6 +91,12 @@ describe('company extraction', () => {
     const decision = await engine.getPage(decisionSlug, { sourceId: 'company' });
     expect(decision?.type).toBe('decision');
     expect(decision?.frontmatter.visibility_policy_id).toBe(COMPANY_DEFAULT_POLICY_ID);
+    expect(decision?.frontmatter.visibility_policy_ids).toEqual([COMPANY_DEFAULT_POLICY_ID]);
+    expect(decision?.frontmatter.object_policy_metadata_stage).toBe(COMPANY_OBJECT_POLICY_STAGE);
+    expect(decision?.frontmatter.object_policy_enforcement).toBe(COMPANY_OBJECT_POLICY_ENFORCEMENT);
+    expect(decision?.frontmatter.visibility_assignment).toBe('derived_visibility');
+    expect(decision?.frontmatter.visibility_assignment_reason).toBe('single_input_inherits');
+    expect((decision?.frontmatter.derived_visibility as any).decision).toBe('inherit');
     expect(decision?.frontmatter.created_by).toBe('extract-operator');
     expect(decision?.frontmatter.derived_from).toEqual([ingest.meeting.slug]);
     expect(decision?.frontmatter.evidence_refs).toEqual([ingest.evidence[0]?.slug]);
@@ -101,6 +113,7 @@ describe('company extraction', () => {
 
     const commitment = await engine.getPage(result.commitments[0]!.slug, { sourceId: 'company' });
     expect(commitment?.type).toBe('commitment');
+    expect(commitment?.frontmatter.visibility_assignment).toBe('derived_visibility');
     expect(commitment?.frontmatter.owner).toBe('bob-example');
     expect(commitment?.frontmatter.projects).toEqual(['citation-refresh']);
     expect(commitment?.frontmatter.source_meeting).toBe(ingest.meeting.slug);
@@ -109,6 +122,7 @@ describe('company extraction', () => {
 
     const action = await engine.getPage(result.actions[0]!.slug, { sourceId: 'company' });
     expect(action?.type).toBe('action');
+    expect(action?.frontmatter.object_policy_metadata_stage).toBe(COMPANY_OBJECT_POLICY_STAGE);
     expect(action?.frontmatter.owner).toBe('bob-example');
     expect(action?.frontmatter.status).toBe('open');
     expect(action?.frontmatter.source_meeting).toBe(ingest.meeting.slug);

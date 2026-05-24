@@ -12,6 +12,7 @@ import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from '../core
 import { applyCompanyModeSkeleton, type CompanyModeConfig } from '../core/company-mode.ts';
 import { applyCompanyLayout } from '../core/company-layout.ts';
 import { applyCompanyPolicySeed } from '../core/company-policy.ts';
+import { applyCompanyObjectPolicyConfig } from '../core/company-object-policy.ts';
 
 export async function runInit(args: string[]) {
   const isSupabase = args.includes('--supabase');
@@ -813,10 +814,12 @@ async function applyCompanyModeAndLayout(engine: Awaited<ReturnType<typeof creat
   const companyConfig = await applyCompanyModeSkeleton(engine);
   const layout = await applyCompanyLayout(engine);
   const policy = await applyCompanyPolicySeed(engine);
+  const objectPolicy = await applyCompanyObjectPolicyConfig(engine, policy.storage);
   return {
     ...companyConfig,
     schema_pack: layout.schema_pack,
     layout,
+    object_policy: objectPolicy,
     policy: {
       seed: policy.seed,
       metadata: policy.metadata,

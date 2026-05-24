@@ -5,7 +5,6 @@ import { serializeMarkdown } from './markdown.ts';
 import { slugifySegment } from './sync.ts';
 import type { Page } from './types.ts';
 import {
-  COMPANY_DEFAULT_POLICY_ID,
   COMPANY_SCHEMA_PACK_NAME,
 } from './company-layout.ts';
 import {
@@ -13,6 +12,12 @@ import {
   COMPANY_PRIMARY_SOURCE_ID,
   COMPANY_TRUST_MODE,
 } from './company-mode.ts';
+import {
+  assignCompanyObjectPolicyMetadata,
+  companyVisibilityPolicySetFromPage,
+  loadCompanyPolicyStorageForObjectMetadata,
+} from './company-object-policy.ts';
+import type { CompanyPolicyStorage } from './company-policy.ts';
 
 export const COMPANY_EXTRACTION_KIND = 'company-extraction';
 
@@ -72,6 +77,7 @@ interface WorkspaceContext {
   createdBy: string | null;
   noEmbed: boolean;
   limit: number;
+  policyStorage: CompanyPolicyStorage | null;
 }
 
 interface SourceUnit {
@@ -182,6 +188,7 @@ async function resolveCompanyWorkspace(
     createdBy: input.createdBy ?? null,
     noEmbed: input.noEmbed ?? false,
     limit,
+    policyStorage: await loadCompanyPolicyStorageForObjectMetadata(engine),
   };
 }
 
@@ -404,7 +411,7 @@ async function importArtifact(
   usedSlugs: Set<string>,
 ): Promise<CompanyExtractedPage> {
   const slug = uniqueSlug(slugForArtifact(artifact), usedSlugs);
-  const content = buildArtifactMarkdown(artifact, ctx);
+  const content = buildArtifactMarkdown(artifact, ctx, slug);
   const result = await importFromContent(engine, slug, content, {
     noEmbed: ctx.noEmbed,
     sourceId: ctx.sourceId,
@@ -423,14 +430,10 @@ async function importArtifact(
   };
 }
 
-function buildArtifactMarkdown(artifact: Artifact, ctx: WorkspaceContext): string {
-  const frontmatter = {
-    visibility_policy_id: COMPANY_DEFAULT_POLICY_ID,
-    created_by: ctx.createdBy ?? stringOrNull(artifact.source.frontmatter.created_by),
+function buildArtifactMarkdown(artifact: Artifact, ctx: WorkspaceContext, slug: string): string {
+  const frontmatter = assignCompanyObjectPolicyMetadata({
     derived_from: [artifact.source.slug],
     evidence_refs: artifact.evidenceRefs,
-    trusted_workspace_artifact: true,
-    policy_enforcement: 'deferred',
     source_page: artifact.source.slug,
     source_type: artifact.source.type,
     source_quote: artifact.quote,
@@ -438,7 +441,15 @@ function buildArtifactMarkdown(artifact: Artifact, ctx: WorkspaceContext): strin
     captured_at: ctx.capturedAt,
     extraction_stage: 'stage-1d-local',
     extraction_method: 'deterministic-local-patterns',
-  };
+  }, {
+    objectType: artifact.kind,
+    slug,
+    storage: ctx.policyStorage,
+    createdBy: ctx.createdBy ?? stringOrNull(artifact.source.frontmatter.created_by),
+    derivedFrom: [artifact.source.slug],
+    evidenceRefs: artifact.evidenceRefs,
+    sourceVisibilityPolicyIds: [companyVisibilityPolicySetFromPage(artifact.source)],
+  });
 
   if (artifact.kind === 'decision') {
     return serializeMarkdown({

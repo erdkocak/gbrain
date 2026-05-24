@@ -7,6 +7,11 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { applyCompanyModeSkeleton } from '../src/core/company-mode.ts';
 import { applyCompanyLayout, COMPANY_DEFAULT_POLICY_ID } from '../src/core/company-layout.ts';
+import { applyCompanyPolicySeed } from '../src/core/company-policy.ts';
+import {
+  COMPANY_OBJECT_POLICY_ENFORCEMENT,
+  COMPANY_OBJECT_POLICY_STAGE,
+} from '../src/core/company-object-policy.ts';
 import {
   CompanyIngestError,
   COMPANY_MANUAL_INGEST_KIND,
@@ -31,6 +36,7 @@ beforeEach(async () => {
   await resetPgliteState(engine);
   await applyCompanyModeSkeleton(engine);
   await applyCompanyLayout(engine);
+  await applyCompanyPolicySeed(engine);
   tmp = mkdtempSync(join(tmpdir(), 'gbrain-company-ingest-'));
 });
 
@@ -79,6 +85,11 @@ describe('company manual ingestion', () => {
     expect(meeting?.type).toBe('meeting');
     expect(meeting?.compiled_truth).toContain('Product sync transcript');
     expect(meeting?.frontmatter.visibility_policy_id).toBe(COMPANY_DEFAULT_POLICY_ID);
+    expect(meeting?.frontmatter.visibility_policy_ids).toEqual([COMPANY_DEFAULT_POLICY_ID]);
+    expect(meeting?.frontmatter.object_policy_metadata_stage).toBe(COMPANY_OBJECT_POLICY_STAGE);
+    expect(meeting?.frontmatter.object_policy_enforcement).toBe(COMPANY_OBJECT_POLICY_ENFORCEMENT);
+    expect(meeting?.frontmatter.visibility_assignment).toBe('path_default');
+    expect(meeting?.frontmatter.visibility_assignment_reason).toBe('policy_storage_path_default');
     expect(meeting?.frontmatter.created_by).toBe('local-operator');
     expect(meeting?.frontmatter.event_date).toBe('2026-05-23');
     expect(meeting?.frontmatter.attendees).toEqual(['alice-example', 'bob-example']);
@@ -93,6 +104,8 @@ describe('company manual ingestion', () => {
 
     const linkedDoc = await engine.getPage('docs/search-refresh-prd', { sourceId: 'company' });
     expect(linkedDoc?.type).toBe('doc');
+    expect(linkedDoc?.frontmatter.visibility_policy_id).toBe(COMPANY_DEFAULT_POLICY_ID);
+    expect(linkedDoc?.frontmatter.object_policy_metadata_stage).toBe(COMPANY_OBJECT_POLICY_STAGE);
     expect(linkedDoc?.frontmatter.linked_meetings).toEqual(['meetings/2026-05-23-product-sync']);
     expect(linkedDoc?.frontmatter.evidence_refs).toEqual(['evidence/2026-05-23-doc-search-refresh-prd']);
     expect(linkedDoc?.compiled_truth).toContain('Search Refresh PRD');
@@ -101,6 +114,8 @@ describe('company manual ingestion', () => {
     const evidence = await engine.getPage('evidence/2026-05-23-transcript-product-sync', { sourceId: 'company' });
     const expectedHash = createHash('sha256').update(readFileSync(transcript)).digest('hex');
     expect(evidence?.type).toBe('evidence');
+    expect(evidence?.frontmatter.visibility_policy_id).toBe(COMPANY_DEFAULT_POLICY_ID);
+    expect(evidence?.frontmatter.object_policy_metadata_stage).toBe(COMPANY_OBJECT_POLICY_STAGE);
     expect(evidence?.frontmatter.evidence_type).toBe('transcript');
     expect(evidence?.frontmatter.supports).toEqual(['meetings/2026-05-23-product-sync']);
     expect(evidence?.frontmatter.source_sha256).toBe(expectedHash);

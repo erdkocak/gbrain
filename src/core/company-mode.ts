@@ -41,6 +41,7 @@ export interface CompanyModeConfig {
   hosted_surface: CompanyHostedSurfaceConfig;
   policy?: unknown;
   layout?: unknown;
+  object_policy?: unknown;
 }
 
 export function buildCompanyModeConfig(
