@@ -417,6 +417,7 @@ export async function hybridSearch(
     // ordering means we can't lazy-spread the full opts).
     sourceId: opts?.sourceId,
     sourceIds: opts?.sourceIds,
+    readablePolicyIds: opts?.readablePolicyIds,
     // v0.36 (D11): pass the pre-validated descriptor into the engine so
     // it never has to read config. Engines normalize string-or-descriptor
     // via normalizeEngineColumn; the descriptor path is the strict one.
@@ -827,6 +828,8 @@ export async function hybridSearch(
         walkDepth,
         nearSymbol: opts?.nearSymbol,
         sourceId: opts?.sourceId,
+        sourceIds: opts?.sourceIds,
+        readablePolicyIds: opts?.readablePolicyIds,
       });
       // Resolve new chunk IDs (not already in fused) into full rows.
       const existingIds = new Set(fused.map(r => r.chunk_id));
@@ -834,7 +837,11 @@ export async function hybridSearch(
         .filter(e => !existingIds.has(e.chunk_id))
         .map(e => e.chunk_id);
       if (newIds.length > 0) {
-        const hydrated = await hydrateChunks(engine, newIds);
+        const hydrated = await hydrateChunks(engine, newIds, {
+          sourceId: opts?.sourceId,
+          sourceIds: opts?.sourceIds,
+          readablePolicyIds: opts?.readablePolicyIds,
+        });
         const scoreById = new Map(expanded.map(e => [e.chunk_id, e.score]));
         for (const r of hydrated) {
           r.score = scoreById.get(r.chunk_id) ?? 0.01;
@@ -995,7 +1002,8 @@ export async function hybridSearchCached(
     !cache.isEnabled() ||
     (opts?.walkDepth ?? 0) > 0 ||
     Boolean(opts?.nearSymbol) ||
-    isNonDefaultColumn;
+    isNonDefaultColumn ||
+    opts?.readablePolicyIds !== undefined;
 
   let cacheStatus: 'hit' | 'miss' | 'disabled' = skipCache ? 'disabled' : 'miss';
   let cacheSimilarity: number | undefined;

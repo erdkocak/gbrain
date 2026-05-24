@@ -43,7 +43,14 @@ import { normalizeWeightForStorage } from './takes-fence.ts';
 import { GBrainError, PAGE_SORT_SQL } from './types.ts';
 import { computeAnomaliesFromBuckets } from './cycle/anomaly.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql } from './search/sql-ranking.ts';
+import {
+  buildSourceFactorCase,
+  buildHardExcludeClause,
+  buildVisibilityClause,
+  buildRecencyComponentSql,
+  buildReadablePolicyClause,
+  normalizeReadablePolicyIds,
+} from './search/sql-ranking.ts';
 import {
   normalizeEngineColumn,
   buildVectorCastFragment,
@@ -1221,6 +1228,15 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.sourceId);
       extraFilter += ` AND p.source_id = $${params.length}`;
     }
+    const readablePolicyIds = normalizeReadablePolicyIds(opts?.readablePolicyIds);
+    if (readablePolicyIds) {
+      if (readablePolicyIds.length === 0) {
+        extraFilter += ` AND FALSE`;
+      } else {
+        params.push(readablePolicyIds);
+        extraFilter += ` ${buildReadablePolicyClause('p', `$${params.length}`)}`;
+      }
+    }
 
     const { rows } = await this.db.query(
       `WITH ranked AS (
@@ -1327,6 +1343,15 @@ export class PGLiteEngine implements BrainEngine {
     } else if (opts?.sourceId) {
       params.push(opts.sourceId);
       extraFilter += ` AND p.source_id = $${params.length}`;
+    }
+    const readablePolicyIds = normalizeReadablePolicyIds(opts?.readablePolicyIds);
+    if (readablePolicyIds) {
+      if (readablePolicyIds.length === 0) {
+        extraFilter += ` AND FALSE`;
+      } else {
+        params.push(readablePolicyIds);
+        extraFilter += ` ${buildReadablePolicyClause('p', `$${params.length}`)}`;
+      }
     }
 
     // Bigram-frequency count: count occurrences of $qRaw in chunk_text via
@@ -1460,6 +1485,15 @@ export class PGLiteEngine implements BrainEngine {
       params.push(opts.sourceId);
       extraFilter += ` AND p.source_id = $${params.length}`;
     }
+    const readablePolicyIds = normalizeReadablePolicyIds(opts?.readablePolicyIds);
+    if (readablePolicyIds) {
+      if (readablePolicyIds.length === 0) {
+        extraFilter += ` AND FALSE`;
+      } else {
+        params.push(readablePolicyIds);
+        extraFilter += ` ${buildReadablePolicyClause('p', `$${params.length}`)}`;
+      }
+    }
 
     // visibilityClause already declared above (v0.32.7: hoisted so CJK branch can reuse).
 
@@ -1547,6 +1581,15 @@ export class PGLiteEngine implements BrainEngine {
     } else if (opts?.sourceId) {
       params.push(opts.sourceId);
       extraFilter += ` AND p.source_id = $${params.length}`;
+    }
+    const readablePolicyIds = normalizeReadablePolicyIds(opts?.readablePolicyIds);
+    if (readablePolicyIds) {
+      if (readablePolicyIds.length === 0) {
+        extraFilter += ` AND FALSE`;
+      } else {
+        params.push(readablePolicyIds);
+        extraFilter += ` ${buildReadablePolicyClause('p', `$${params.length}`)}`;
+      }
     }
 
     // v0.26.5: visibility filter applied in the inner CTE so HNSW sees the

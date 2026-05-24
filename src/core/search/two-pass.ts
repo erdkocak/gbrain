@@ -23,6 +23,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
+import { buildReadablePolicyClause, normalizeReadablePolicyIds } from './sql-ranking.ts';
 
 const MAX_WALK_DEPTH = 2;
 const NEIGHBOR_CAP_PER_HOP = 50;
@@ -34,6 +35,10 @@ export interface TwoPassOpts {
   nearSymbol?: string;
   /** Filter expansion to one source. When unset, crosses sources. */
   sourceId?: string;
+  /** Filter expansion to any of these sources. Wins over sourceId when set. */
+  sourceIds?: string[];
+  /** Filter expansion to pages readable under these policy ids. */
+  readablePolicyIds?: string[];
 }
 
 interface ChunkWithScore {
@@ -83,18 +88,15 @@ export async function expandAnchors(
   // filter; undefined → cross-source (matches the documented contract).
   if (opts.nearSymbol) {
     try {
-      const rows = opts.sourceId
-        ? await engine.executeRaw<{ id: number }>(
-            `SELECT cc.id FROM content_chunks cc
-             JOIN pages p ON p.id = cc.page_id
-             WHERE cc.symbol_name_qualified = $1 AND p.source_id = $2
-             LIMIT 50`,
-            [opts.nearSymbol, opts.sourceId],
-          )
-        : await engine.executeRaw<{ id: number }>(
-            `SELECT id FROM content_chunks WHERE symbol_name_qualified = $1 LIMIT 50`,
-            [opts.nearSymbol],
-          );
+      const params: unknown[] = [opts.nearSymbol];
+      const filter = appendScopeFilters(opts, params, 'p');
+      const rows = await engine.executeRaw<{ id: number }>(
+        `SELECT cc.id FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         WHERE cc.symbol_name_qualified = $1 ${filter}
+         LIMIT 50`,
+        params,
+      );
       const baseScore = anchors.length > 0 ? anchors[0]!.score : 1.0;
       for (const r of rows) {
         if (!seen.has(r.id)) {
@@ -146,26 +148,28 @@ export async function expandAnchors(
       // boundaries silently in multi-source brains.
       if (unresolvedTargets.length > 0) {
         try {
-          const resolved = opts.sourceId
-            ? await engine.executeRaw<{ id: number }>(
-                `SELECT cc.id FROM content_chunks cc
-                 JOIN pages p ON p.id = cc.page_id
-                 WHERE cc.symbol_name_qualified = ANY($1::text[])
-                   AND p.source_id = $2
-                 LIMIT ${NEIGHBOR_CAP_PER_HOP}`,
-                [unresolvedTargets, opts.sourceId],
-              )
-            : await engine.executeRaw<{ id: number }>(
-                `SELECT id FROM content_chunks WHERE symbol_name_qualified = ANY($1::text[]) LIMIT ${NEIGHBOR_CAP_PER_HOP}`,
-                [unresolvedTargets],
-              );
+          const params: unknown[] = [unresolvedTargets];
+          const filter = appendScopeFilters(opts, params, 'p');
+          const resolved = await engine.executeRaw<{ id: number }>(
+            `SELECT cc.id FROM content_chunks cc
+             JOIN pages p ON p.id = cc.page_id
+             WHERE cc.symbol_name_qualified = ANY($1::text[]) ${filter}
+             LIMIT ${NEIGHBOR_CAP_PER_HOP}`,
+            params,
+          );
           for (const r of resolved) directChunkIds.push(r.id);
         } catch {
           // best-effort
         }
       }
 
-      for (const tid of directChunkIds) {
+      let filteredDirectChunkIds: number[] = [];
+      try {
+        filteredDirectChunkIds = await filterChunkIds(engine, directChunkIds, opts);
+      } catch {
+        filteredDirectChunkIds = [];
+      }
+      for (const tid of filteredDirectChunkIds) {
         if (seen.has(tid)) continue;
         const nbScore = current.score * decay;
         seen.set(tid, { chunk_id: tid, score: nbScore, hop, source: 'neighbor' });
@@ -188,8 +192,11 @@ export async function expandAnchors(
 export async function hydrateChunks(
   engine: BrainEngine,
   chunkIds: number[],
+  opts: TwoPassOpts = {},
 ): Promise<SearchResult[]> {
   if (chunkIds.length === 0) return [];
+  const params: unknown[] = [chunkIds];
+  const filter = appendScopeFilters(opts, params, 'p');
   const rows = await engine.executeRaw<{
     slug: string; page_id: number; title: string; type: string; source_id: string;
     chunk_id: number; chunk_index: number; chunk_text: string; chunk_source: string;
@@ -198,8 +205,8 @@ export async function hydrateChunks(
             cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
        FROM content_chunks cc
        JOIN pages p ON p.id = cc.page_id
-       WHERE cc.id = ANY($1::int[])`,
-    [chunkIds],
+       WHERE cc.id = ANY($1::int[]) ${filter}`,
+    params,
   );
   return rows.map((r) => ({
     slug: r.slug,
@@ -214,4 +221,51 @@ export async function hydrateChunks(
     stale: false,
     source_id: r.source_id,
   } as SearchResult));
+}
+
+async function filterChunkIds(
+  engine: BrainEngine,
+  chunkIds: number[],
+  opts: TwoPassOpts,
+): Promise<number[]> {
+  const unique = [...new Set(chunkIds.filter((id) => Number.isInteger(id)))];
+  if (unique.length === 0) return [];
+  const params: unknown[] = [unique];
+  const filter = appendScopeFilters(opts, params, 'p');
+  if (!filter) return unique;
+  const rows = await engine.executeRaw<{ id: number }>(
+    `SELECT cc.id
+       FROM content_chunks cc
+       JOIN pages p ON p.id = cc.page_id
+      WHERE cc.id = ANY($1::int[]) ${filter}`,
+    params,
+  );
+  const allowed = new Set(rows.map((row) => Number(row.id)));
+  return unique.filter((id) => allowed.has(id));
+}
+
+function appendScopeFilters(
+  opts: TwoPassOpts,
+  params: unknown[],
+  pageAlias: string,
+): string {
+  let filter = '';
+  if (opts.sourceIds && opts.sourceIds.length > 0) {
+    params.push(opts.sourceIds);
+    filter += ` AND ${pageAlias}.source_id = ANY($${params.length}::text[])`;
+  } else if (opts.sourceId) {
+    params.push(opts.sourceId);
+    filter += ` AND ${pageAlias}.source_id = $${params.length}`;
+  }
+
+  const readablePolicyIds = normalizeReadablePolicyIds(opts.readablePolicyIds);
+  if (readablePolicyIds) {
+    if (readablePolicyIds.length === 0) {
+      filter += ' AND FALSE';
+    } else {
+      params.push(readablePolicyIds);
+      filter += ` ${buildReadablePolicyClause(pageAlias, `$${params.length}`)}`;
+    }
+  }
+  return filter;
 }

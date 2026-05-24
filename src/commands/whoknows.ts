@@ -73,6 +73,11 @@ export interface WhoknowsOpts {
    * `sourceScopeOpts` in operations.ts. Array wins over scalar `sourceId`.
    */
   sourceIds?: string[];
+  /**
+   * Restrict expert candidates to pages readable under these object-policy ids.
+   * Used by hosted company requests; undefined preserves local/admin behavior.
+   */
+  readablePolicyIds?: string[];
 }
 
 export interface WhoknowsResult {
@@ -197,6 +202,7 @@ export async function findExperts(
     recency: 'off',
     sourceId: opts.sourceId,
     sourceIds: opts.sourceIds,
+    readablePolicyIds: opts.readablePolicyIds,
   });
 
   if (results.length === 0) return [];

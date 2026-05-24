@@ -1,5 +1,5 @@
 import type { OperationContext } from './operations.ts';
-import type { Page } from './types.ts';
+import type { Page, SearchOpts, SearchResult } from './types.ts';
 
 export interface CompanyReadScope {
   readablePolicyIds: Set<string>;
@@ -29,6 +29,12 @@ export function companyReadScope(ctx: OperationContext): CompanyReadScope | null
 
 export function isCompanyReadFiltered(ctx: OperationContext): boolean {
   return companyReadScope(ctx) !== null;
+}
+
+export function companyReadableSearchOpts(ctx: OperationContext): Pick<SearchOpts, 'readablePolicyIds'> {
+  const scope = companyReadScope(ctx);
+  if (!scope) return {};
+  return { readablePolicyIds: [...scope.readablePolicyIds].sort() };
 }
 
 export function isPageReadableForCompany(ctx: OperationContext, page: Page): boolean {
@@ -109,6 +115,13 @@ export async function filterReadablePageBackedRows<T>(
     const pageId = pageIdForRow(row);
     return typeof pageId === 'number' && readable.has(pageId);
   });
+}
+
+export async function filterReadableSearchResults<T extends SearchResult>(
+  ctx: OperationContext,
+  results: T[],
+): Promise<T[]> {
+  return filterReadablePageBackedRows(ctx, results, (row) => row.page_id);
 }
 
 export async function filterReadablePageRefRows<T>(

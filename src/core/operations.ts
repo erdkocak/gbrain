@@ -25,10 +25,12 @@ import { stripFactsFence } from './facts-fence.ts';
 import { bumpLastRetrievedAt } from './last-retrieved.ts';
 import { CJK_SLUG_CHARS } from './cjk.ts';
 import {
+  companyReadableSearchOpts,
   filterReadableAnomalies,
   filterReadablePageBackedRows,
   filterReadablePageRefRows,
   filterReadablePages,
+  filterReadableSearchResults,
   filterReadableSlugCandidates,
   isCompanyReadFiltered,
   isPageReadableForCompany,
@@ -1273,8 +1275,9 @@ const search: Operation = {
       limit: (p.limit as number) || 20,
       offset: (p.offset as number) || 0,
       ...sourceScopeOpts(ctx),
+      ...companyReadableSearchOpts(ctx),
     });
-    const results = dedupResults(raw);
+    const results = await filterReadableSearchResults(ctx, dedupResults(raw));
     const latency_ms = Date.now() - startedAt;
 
     // v0.37.0 (D11): op-layer last_retrieved_at write-back. Fire-and-forget;
@@ -1425,8 +1428,9 @@ const query: Operation = {
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
         ...querySourceScope,
+        ...companyReadableSearchOpts(ctx),
       });
-      return results;
+      return filterReadableSearchResults(ctx, results);
     }
 
     if (!queryText) {
@@ -1457,6 +1461,7 @@ const query: Operation = {
       nearSymbol: (p.near_symbol as string) || undefined,
       walkDepth: typeof p.walk_depth === 'number' ? (p.walk_depth as number) : undefined,
       ...querySourceScope,
+      ...companyReadableSearchOpts(ctx),
       // v0.29.1 — agent-explicit recency + salience. Omitted = heuristic defaults.
       salience: p.salience as 'off' | 'on' | 'strong' | undefined,
       recency: p.recency as 'off' | 'on' | 'strong' | undefined,
@@ -1476,11 +1481,12 @@ const query: Operation = {
       // (master's #1182 cleanup of the duplicate sourceScopeOpts spread).
       embeddingColumn: embeddingColumnParam,
     });
+    const readableResults = await filterReadableSearchResults(ctx, results);
     const latency_ms = Date.now() - startedAt;
 
     // v0.37.0 (D11): op-layer last_retrieved_at write-back. Same shape as the
     // search handler — fire-and-forget, internal callers bypass this path.
-    bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
+    bumpLastRetrievedAt(ctx.engine, readableResults.map((r) => r.page_id));
 
     // Op-layer capture (v0.25.0). Fire-and-forget. meta tells gbrain-evals
     // what hybridSearch *actually* did so replay can distinguish "with API
@@ -1495,7 +1501,7 @@ const query: Operation = {
         {
           tool_name: 'query',
           query: queryText,
-          results,
+          results: readableResults,
           meta,
           latency_ms,
           remote: ctx.remote ?? false,
@@ -1508,7 +1514,7 @@ const query: Operation = {
       );
     }
 
-    return results;
+    return readableResults;
   },
   scope: 'read',
   cliHints: { name: 'query', positional: ['query'] },
@@ -2905,6 +2911,7 @@ const find_experts: Operation = {
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       explain: p.explain === true,
       ...sourceScopeOpts(ctx),
+      ...companyReadableSearchOpts(ctx),
     });
   },
   cliHints: { name: 'whoknows', positional: ['topic'] },
@@ -3839,12 +3846,12 @@ const search_by_image: Operation = {
     );
 
     // Resolve source-scope (D5 canonical thread).
-    const resolvedSourceId =
+    const imageSourceScope =
       sourceIdParam !== undefined
         ? sourceIdParam === '__all__'
-          ? undefined
-          : sourceIdParam
-        : ctx.sourceId;
+          ? {}
+          : { sourceId: sourceIdParam }
+        : sourceScopeOpts(ctx);
 
     const { searchByImage } = await import('./search/by-image.ts');
     const results = await searchByImage(
@@ -3854,8 +3861,8 @@ const search_by_image: Operation = {
         limit: (p.limit as number) || 20,
         offset: (p.offset as number) || 0,
         query: queryRefinement,
-        sourceId: resolvedSourceId,
-        ...sourceScopeOpts(ctx),
+        ...imageSourceScope,
+        ...companyReadableSearchOpts(ctx),
       },
     );
 
@@ -3876,7 +3883,7 @@ const search_by_image: Operation = {
       });
     }
 
-    return results;
+    return filterReadableSearchResults(ctx, results);
   },
   cliHints: { name: 'search-by-image' },
 };

@@ -73,6 +73,7 @@ export async function searchByImage(
     offset: 0,
     sourceId: opts.sourceId,
     sourceIds: opts.sourceIds,
+    readablePolicyIds: opts.readablePolicyIds,
     // Both branches use the same source-scope threading.
   };
 

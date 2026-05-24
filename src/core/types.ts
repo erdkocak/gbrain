@@ -667,6 +667,13 @@ export interface SearchOpts {
    */
   sourceIds?: string[];
   /**
+   * Internal permission filter for hosted company reads. When set, search
+   * candidates must belong to a page whose frontmatter policy metadata
+   * intersects this readable policy-id set. `undefined` means no policy
+   * filter; `[]` means deny all candidates.
+   */
+  readablePolicyIds?: string[];
+  /**
    * v0.27.1 / v0.36 (D11): target column for vector search. Two shapes:
    *
    * 1. String name (legacy + user-facing). Engine and hybridSearch convert

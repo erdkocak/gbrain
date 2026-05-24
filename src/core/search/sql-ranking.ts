@@ -129,6 +129,43 @@ export function buildVisibilityClause(pageAlias: string, sourceAlias: string): s
   return `AND ${pageAlias}.deleted_at IS NULL AND NOT ${sourceAlias}.archived`;
 }
 
+/**
+ * Normalize a caller-supplied readable-policy list for SQL filtering.
+ *
+ * `undefined` means "no policy filter requested"; an empty returned array
+ * means "policy filter requested, but no policies are readable" and callers
+ * should add a deny-all predicate.
+ */
+export function normalizeReadablePolicyIds(policyIds: readonly string[] | undefined): string[] | null {
+  if (policyIds === undefined) return null;
+  return [...new Set(policyIds.map((id) => id.trim()).filter(Boolean))].sort();
+}
+
+/**
+ * Build a page-frontmatter policy predicate for search candidate queries.
+ *
+ * The parameter placeholder must point at a `text[]` value containing
+ * readable policy ids. Callers are responsible for adding `AND FALSE` when
+ * the normalized list is empty.
+ */
+export function buildReadablePolicyClause(pageAlias: string, policyIdsParam: string): string {
+  const scalar = `${pageAlias}.frontmatter->>'visibility_policy_id'`;
+  const many = `${pageAlias}.frontmatter->'visibility_policy_ids'`;
+  return `AND (
+    ${scalar} = ANY(${policyIdsParam}::text[])
+    OR EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements_text(
+        CASE
+          WHEN jsonb_typeof(${many}) = 'array' THEN ${many}
+          ELSE '[]'::jsonb
+        END
+      ) AS readable_policy(policy_id)
+      WHERE readable_policy.policy_id = ANY(${policyIdsParam}::text[])
+    )
+  )`;
+}
+
 // ============================================================
 // v0.29.1 — Recency component SQL builder
 // ============================================================

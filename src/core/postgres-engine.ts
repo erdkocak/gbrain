@@ -52,7 +52,14 @@ import { ConnectionManager } from './connection-manager.ts';
 import { logConnectionEvent } from './connection-audit.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, takeRowToTake } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildRecencyComponentSql } from './search/sql-ranking.ts';
+import {
+  buildSourceFactorCase,
+  buildHardExcludeClause,
+  buildVisibilityClause,
+  buildRecencyComponentSql,
+  buildReadablePolicyClause,
+  normalizeReadablePolicyIds,
+} from './search/sql-ranking.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 
 function escapeSqlStringLiteral(value: string): string {
@@ -1305,6 +1312,16 @@ export class PostgresEngine implements BrainEngine {
       params.push(opts.sourceId);
       sourceClause = `AND p.source_id = $${params.length}`;
     }
+    let readablePolicyClause = '';
+    const readablePolicyIds = normalizeReadablePolicyIds(opts?.readablePolicyIds);
+    if (readablePolicyIds) {
+      if (readablePolicyIds.length === 0) {
+        readablePolicyClause = 'AND FALSE';
+      } else {
+        params.push(readablePolicyIds);
+        readablePolicyClause = buildReadablePolicyClause('p', `$${params.length}`);
+      }
+    }
     params.push(innerLimit);
     const innerLimitParam = `$${params.length}`;
     params.push(limit);
@@ -1338,6 +1355,7 @@ export class PostgresEngine implements BrainEngine {
           ${afterDateClause}
           ${beforeDateClause}
           ${sourceClause}
+          ${readablePolicyClause}
           ${hardExcludeClause}
           ${visibilityClause}
           -- v0.27.1: hide image rows from text-keyword search so OCR text
@@ -1453,6 +1471,16 @@ export class PostgresEngine implements BrainEngine {
       params.push(opts.sourceId);
       sourceClause = `AND p.source_id = $${params.length}`;
     }
+    let readablePolicyClause = '';
+    const readablePolicyIds = normalizeReadablePolicyIds(opts?.readablePolicyIds);
+    if (readablePolicyIds) {
+      if (readablePolicyIds.length === 0) {
+        readablePolicyClause = 'AND FALSE';
+      } else {
+        params.push(readablePolicyIds);
+        readablePolicyClause = buildReadablePolicyClause('p', `$${params.length}`);
+      }
+    }
     params.push(limit);
     const limitParam = `$${params.length}`;
     params.push(offset);
@@ -1481,6 +1509,7 @@ export class PostgresEngine implements BrainEngine {
         ${afterDateClause}
         ${beforeDateClause}
         ${sourceClause}
+        ${readablePolicyClause}
         ${hardExcludeClause}
         ${visibilityClause}
       ORDER BY score DESC
@@ -1577,6 +1606,16 @@ export class PostgresEngine implements BrainEngine {
       params.push(opts.sourceId);
       sourceClause = `AND p.source_id = $${params.length}`;
     }
+    let readablePolicyClause = '';
+    const readablePolicyIds = normalizeReadablePolicyIds(opts?.readablePolicyIds);
+    if (readablePolicyIds) {
+      if (readablePolicyIds.length === 0) {
+        readablePolicyClause = 'AND FALSE';
+      } else {
+        params.push(readablePolicyIds);
+        readablePolicyClause = buildReadablePolicyClause('p', `$${params.length}`);
+      }
+    }
     params.push(innerLimit);
     const innerLimitParam = `$${params.length}`;
     params.push(limit);
@@ -1630,6 +1669,7 @@ export class PostgresEngine implements BrainEngine {
           ${afterDateClause}
           ${beforeDateClause}
           ${sourceClause}
+          ${readablePolicyClause}
           ${hardExcludeClause}
           ${visibilityClause}
         ORDER BY cc.${col} <=> ${castSql}
