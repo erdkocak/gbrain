@@ -34,6 +34,10 @@ import {
   isPageReadableForCompany,
   isPageSlugReadableForCompany,
 } from './company-read-filter.ts';
+import {
+  isHostedCompanyWriteEnforced,
+  prepareHostedCompanyPutPageContent,
+} from './company-write-auth.ts';
 import * as db from './db.ts';
 import { VERSION } from '../version.ts';
 import {
@@ -643,12 +647,10 @@ const put_page: Operation = {
       }
     }
 
-    if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
-    // Skip embedding when the AI gateway has no embedding provider configured.
-    // Checks all auth env vars for the resolved provider, not just OPENAI_API_KEY,
-    // so Gemini / Ollama / Voyage brains don't silently drop embeddings (Codex C2).
-    const { isAvailable } = await import('./ai/gateway.ts');
-    const noEmbed = !isAvailable('embedding');
+    const hostedCompanyWriteEnforced = isHostedCompanyWriteEnforced(ctx);
+    if (!hostedCompanyWriteEnforced && ctx.dryRun) {
+      return { dry_run: true, action: 'put_page', slug: p.slug };
+    }
     // v0.31.8 (D7 / codex OV-1): thread ctx.sourceId so put_page on a
     // multi-source brain lands in the intended source instead of the
     // default-source clobber path. importFromContent already accepts
@@ -672,7 +674,23 @@ const put_page: Operation = {
       // Pack load failed; fall through to legacy inferType behavior.
       activePack = undefined;
     }
-    const result = await importFromContent(ctx.engine, slug, p.content as string, {
+
+    const preparedCompanyContent = await prepareHostedCompanyPutPageContent(ctx, slug, p.content as string, {
+      ...(activePack ? { activePack } : {}),
+    });
+    if (!preparedCompanyContent.ok) {
+      throw new OperationError('permission_denied', preparedCompanyContent.message);
+    }
+    if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
+    const hostedCompanyWrite = preparedCompanyContent.enforced;
+
+    // Skip embedding when the AI gateway has no embedding provider configured.
+    // Checks all auth env vars for the resolved provider, not just OPENAI_API_KEY,
+    // so Gemini / Ollama / Voyage brains don't silently drop embeddings (Codex C2).
+    const { isAvailable } = await import('./ai/gateway.ts');
+    const noEmbed = !isAvailable('embedding');
+
+    const result = await importFromContent(ctx.engine, slug, preparedCompanyContent.content, {
       noEmbed,
       ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}),
       // v0.39.0.0 T1.5: pack-aware type inference (loaded above; legacy
@@ -732,11 +750,12 @@ const put_page: Operation = {
     //
     // Trust gating:
     //   - Subagent sandbox (viaSubagent without allowedSlugPrefixes) → DB-only.
+    //   - Hosted company policy path → DB-only until side effects carry policy metadata.
     //   - All other writes → write-through.
     let writeThrough: { written: boolean; path?: string; skipped?: string; error?: string } | undefined;
     const isSandboxSubagent = ctx.viaSubagent === true
       && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
-    if (!ctx.dryRun && result.status !== 'error' && !isSandboxSubagent) {
+    if (!ctx.dryRun && result.status !== 'error' && !isSandboxSubagent && !hostedCompanyWrite) {
       try {
         const repoPath = await ctx.engine.getConfig('sync.repo_path');
         if (!repoPath) {
@@ -771,6 +790,8 @@ const put_page: Operation = {
       }
     } else if (isSandboxSubagent) {
       writeThrough = { written: false, skipped: 'subagent_sandbox' };
+    } else if (hostedCompanyWrite) {
+      writeThrough = { written: false, skipped: 'hosted_company_policy' };
     } else if (ctx.dryRun) {
       writeThrough = { written: false, skipped: 'dry_run' };
     }
@@ -852,37 +873,41 @@ const put_page: Operation = {
     // (MEDIUM facts wait for the dream cycle but DO land via put_page,
     // matching the pre-fix behavior on this surface).
     let factsQueued: { queued: boolean } | { skipped: string } | undefined;
-    try {
-      const { runFactsBackstop } = await import('./facts/backstop.ts');
-      const r = await runFactsBackstop(
-        {
-          slug,
-          type: result.parsedPage!.type,
-          compiled_truth: result.parsedPage!.compiled_truth,
-          frontmatter: result.parsedPage!.frontmatter,
-        },
-        {
-          engine: ctx.engine,
-          sourceId: ctx.sourceId ?? 'default',
-          sessionId: (ctx as { source_session?: string }).source_session ?? null,
-          source: 'mcp:put_page',
-          mode: 'queue',
-        },
-      );
-      if (r.mode === 'queue' && r.enqueued) {
-        factsQueued = { queued: true };
-      } else if (r.mode === 'queue' && r.skipped) {
-        // Preserve the pre-v0.31.2 response shape for MCP clients:
-        // 'kind:guide' / 'too_short' / 'subagent_namespace' / 'dream_generated'
-        // (bare reasons), not the helper's namespaced 'eligibility_failed:...'
-        // discriminator. Map back here.
-        const bare = r.skipped.startsWith('eligibility_failed:')
-          ? r.skipped.slice('eligibility_failed:'.length)
-          : r.skipped;
-        factsQueued = { skipped: bare };
+    if (hostedCompanyWrite) {
+      factsQueued = { skipped: 'hosted_company_policy' };
+    } else {
+      try {
+        const { runFactsBackstop } = await import('./facts/backstop.ts');
+        const r = await runFactsBackstop(
+          {
+            slug,
+            type: result.parsedPage!.type,
+            compiled_truth: result.parsedPage!.compiled_truth,
+            frontmatter: result.parsedPage!.frontmatter,
+          },
+          {
+            engine: ctx.engine,
+            sourceId: ctx.sourceId ?? 'default',
+            sessionId: (ctx as { source_session?: string }).source_session ?? null,
+            source: 'mcp:put_page',
+            mode: 'queue',
+          },
+        );
+        if (r.mode === 'queue' && r.enqueued) {
+          factsQueued = { queued: true };
+        } else if (r.mode === 'queue' && r.skipped) {
+          // Preserve the pre-v0.31.2 response shape for MCP clients:
+          // 'kind:guide' / 'too_short' / 'subagent_namespace' / 'dream_generated'
+          // (bare reasons), not the helper's namespaced 'eligibility_failed:...'
+          // discriminator. Map back here.
+          const bare = r.skipped.startsWith('eligibility_failed:')
+            ? r.skipped.slice('eligibility_failed:'.length)
+            : r.skipped;
+          factsQueued = { skipped: bare };
+        }
+      } catch {
+        factsQueued = { skipped: 'backstop_error' };
       }
-    } catch {
-      factsQueued = { skipped: 'backstop_error' };
     }
 
     // Post-write validator lint (PR 2.5): feature-flag-gated, non-blocking.
@@ -891,19 +916,23 @@ const put_page: Operation = {
     // ingest_log + ~/.gbrain/validator-lint.jsonl. Does NOT reject the
     // write — that's the deferred strict-mode flip after the 7-day soak.
     let writerLint: { error_count: number; warning_count: number } | { skipped: string } | undefined;
-    try {
-      const { runPostWriteLint } = await import('./output/post-write.ts');
-      const lint = await runPostWriteLint(ctx.engine, result.slug);
-      if (lint.ran) {
-        writerLint = {
-          error_count: lint.findings.filter(f => f.severity === 'error').length,
-          warning_count: lint.findings.filter(f => f.severity === 'warning').length,
-        };
-      } else if (lint.skippedReason) {
-        writerLint = { skipped: lint.skippedReason };
+    if (hostedCompanyWrite) {
+      writerLint = { skipped: 'hosted_company_policy' };
+    } else {
+      try {
+        const { runPostWriteLint } = await import('./output/post-write.ts');
+        const lint = await runPostWriteLint(ctx.engine, result.slug);
+        if (lint.ran) {
+          writerLint = {
+            error_count: lint.findings.filter(f => f.severity === 'error').length,
+            warning_count: lint.findings.filter(f => f.severity === 'warning').length,
+          };
+        } else if (lint.skippedReason) {
+          writerLint = { skipped: lint.skippedReason };
+        }
+      } catch {
+        // Non-fatal; never blocks put_page.
       }
-    } catch {
-      // Non-fatal; never blocks put_page.
     }
 
     return {
@@ -2570,6 +2599,7 @@ const get_job: Operation = {
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
   },
+  mutating: true,
   scope: 'admin',
   handler: async (ctx, p) => {
     const { MinionQueue } = await import('./minions/queue.ts');
@@ -2644,6 +2674,7 @@ const get_job_progress: Operation = {
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
   },
+  mutating: true,
   scope: 'admin',
   handler: async (ctx, p) => {
     const { MinionQueue } = await import('./minions/queue.ts');
@@ -2693,6 +2724,7 @@ const replay_job: Operation = {
     id: { type: 'number', required: true, description: 'Source job ID to replay' },
     data_overrides: { type: 'object', required: false, description: 'Data fields to override (merged with original)' },
   },
+  mutating: true,
   scope: 'admin',
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'replay_job', id: p.id };
@@ -2712,6 +2744,7 @@ const send_job_message: Operation = {
     payload: { type: 'object', required: true, description: 'Message payload (arbitrary JSON)' },
     sender: { type: 'string', required: false, description: 'Sender identity (default: admin)' },
   },
+  mutating: true,
   scope: 'admin',
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'send_job_message', id: p.id };
