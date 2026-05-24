@@ -4481,6 +4481,8 @@ interface FactRowSqlShape {
   id: number;
   source_id: string;
   entity_slug: string | null;
+  row_num: number | null;
+  source_markdown_slug: string | null;
   fact: string;
   kind: FactKind;
   visibility: FactVisibility;
@@ -4523,6 +4525,8 @@ function rowToFact(row: FactRowSqlShape): FactRow {
     id: Number(row.id),
     source_id: row.source_id,
     entity_slug: row.entity_slug,
+    row_num: row.row_num == null ? null : Number(row.row_num),
+    source_markdown_slug: row.source_markdown_slug,
     fact: row.fact,
     kind: row.kind,
     visibility: row.visibility,

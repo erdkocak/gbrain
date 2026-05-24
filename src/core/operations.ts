@@ -24,6 +24,16 @@ import { stripTakesFence } from './takes-fence.ts';
 import { stripFactsFence } from './facts-fence.ts';
 import { bumpLastRetrievedAt } from './last-retrieved.ts';
 import { CJK_SLUG_CHARS } from './cjk.ts';
+import {
+  filterReadableAnomalies,
+  filterReadablePageBackedRows,
+  filterReadablePageRefRows,
+  filterReadablePages,
+  filterReadableSlugCandidates,
+  isCompanyReadFiltered,
+  isPageReadableForCompany,
+  isPageSlugReadableForCompany,
+} from './company-read-filter.ts';
 import * as db from './db.ts';
 import { VERSION } from '../version.ts';
 import {
@@ -488,7 +498,7 @@ const get_page: Operation = {
     let resolved_slug: string | undefined;
 
     if (!page && fuzzy) {
-      const candidates = await ctx.engine.resolveSlugs(slug);
+      const candidates = await filterReadableSlugCandidates(ctx, await ctx.engine.resolveSlugs(slug));
       if (candidates.length === 1) {
         page = await ctx.engine.getPage(candidates[0], { includeDeleted, ...sourceOpts });
         resolved_slug = candidates[0];
@@ -498,6 +508,9 @@ const get_page: Operation = {
     }
 
     if (!page) {
+      throw new OperationError('page_not_found', `Page not found: ${slug}`, includeDeleted ? 'Check the slug or use fuzzy: true' : 'Page may be soft-deleted; pass include_deleted: true to verify');
+    }
+    if (!isPageReadableForCompany(ctx, page)) {
       throw new OperationError('page_not_found', `Page not found: ${slug}`, includeDeleted ? 'Check the slug or use fuzzy: true' : 'Page may be soft-deleted; pass include_deleted: true to verify');
     }
 
@@ -1190,7 +1203,7 @@ const list_pages: Operation = {
     // were ignored at this op handler and the engine returned every source's
     // pages indiscriminately.
     const scope = sourceScopeOpts(ctx);
-    const pages = await ctx.engine.listPages({
+    const pages = filterReadablePages(ctx, await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
       limit: clampSearchLimit(p.limit as number | undefined, 50, 100),
@@ -1198,7 +1211,7 @@ const list_pages: Operation = {
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,
       ...scope,
-    });
+    }));
     return pages.map(pg => ({
       slug: pg.slug,
       type: pg.type,
@@ -1489,7 +1502,7 @@ const takes_list: Operation = {
     offset: { type: 'number', description: 'Skip first N rows' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.listTakes({
+    return filterReadablePageBackedRows(ctx, await ctx.engine.listTakes({
       page_slug: p.page_slug as string | undefined,
       holder: p.holder as string | undefined,
       kind: p.kind as never,
@@ -1501,7 +1514,7 @@ const takes_list: Operation = {
       // Per-token allow-list — server-side filter for MCP-bound calls.
       // Local CLI callers leave takesHoldersAllowList unset and see all holders.
       takesHoldersAllowList: ctx.takesHoldersAllowList,
-    });
+    }), row => row.page_id);
   },
   cliHints: { name: 'takes-list' },
 };
@@ -1515,10 +1528,10 @@ const takes_search: Operation = {
     limit: { type: 'number', description: 'Max results (default 30, cap 100)' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.searchTakes(p.query as string, {
+    return filterReadablePageBackedRows(ctx, await ctx.engine.searchTakes(p.query as string, {
       limit: p.limit as number | undefined,
       takesHoldersAllowList: ctx.takesHoldersAllowList,
-    });
+    }), row => row.page_id);
   },
   cliHints: { name: 'takes-search', positional: ['query'] },
 };
@@ -1542,6 +1555,20 @@ const takes_scorecard: Operation = {
     until: { type: 'string', description: 'Window end (YYYY-MM-DD)' },
   },
   handler: async (ctx, p) => {
+    if (isCompanyReadFiltered(ctx)) {
+      return {
+        total_bets: 0,
+        resolved: 0,
+        correct: 0,
+        incorrect: 0,
+        partial: 0,
+        accuracy: null,
+        brier: null,
+        partial_rate: null,
+        unresolvable_count: 0,
+        unresolvable_rate: null,
+      };
+    }
     return ctx.engine.getScorecard(
       {
         holder: p.holder as string | undefined,
@@ -1568,6 +1595,7 @@ const takes_calibration: Operation = {
     bucket_size: { type: 'number', description: 'Bucket width in (0,1]; default 0.1' },
   },
   handler: async (ctx, p) => {
+    if (isCompanyReadFiltered(ctx)) return [];
     return ctx.engine.getCalibrationCurve(
       {
         holder: p.holder as string | undefined,
@@ -1874,6 +1902,7 @@ const get_timeline: Operation = {
   handler: async (ctx, p) => {
     // v0.31.8 (D20): thread ctx.sourceId.
     const sourceId = ctx.sourceId;
+    if (!await isPageSlugReadableForCompany(ctx, p.slug as string, sourceId)) return [];
     return ctx.engine.getTimeline(p.slug as string, sourceId ? { sourceId } : undefined);
   },
   scope: 'read',
@@ -1973,13 +2002,20 @@ const get_versions: Operation = {
   handler: async (ctx, p) => {
     // v0.31.8 (D20): thread ctx.sourceId.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    if (!await isPageSlugReadableForCompany(ctx, p.slug as string, ctx.sourceId)) return [];
     const versions = await ctx.engine.getVersions(p.slug as string, sourceOpts);
     // Same takes-allow-list privacy boundary as get_page. Snapshots persist
     // historical compiled_truth verbatim, including the takes fence, so
     // a remote token bypassing get_page via /history would re-introduce
     // the same leak across every prior version.
-    if (!ctx.takesHoldersAllowList) return versions;
-    return versions.map(v => ({ ...v, compiled_truth: stripTakesFence(v.compiled_truth) }));
+    if (ctx.remote !== true) return versions;
+    return versions.map(v => ({
+      ...v,
+      compiled_truth: stripFactsFence(
+        stripTakesFence(v.compiled_truth),
+        { keepVisibility: ['world'] },
+      ),
+    }));
   },
   scope: 'read',
   cliHints: { name: 'history', positional: ['slug'] },
@@ -2066,6 +2102,7 @@ const get_raw_data: Operation = {
   handler: async (ctx, p) => {
     // v0.31.8 (D20 + D21): thread ctx.sourceId.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    if (!await isPageSlugReadableForCompany(ctx, p.slug as string, ctx.sourceId)) return [];
     return ctx.engine.getRawData(p.slug as string, p.source as string | undefined, sourceOpts);
   },
   scope: 'read',
@@ -2080,7 +2117,7 @@ const resolve_slugs: Operation = {
     partial: { type: 'string', required: true },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.resolveSlugs(p.partial as string);
+    return filterReadableSlugCandidates(ctx, await ctx.engine.resolveSlugs(p.partial as string));
   },
   scope: 'read',
 };
@@ -2094,7 +2131,7 @@ const get_chunks: Operation = {
   handler: async (ctx, p) => {
     // v0.31.8 (D20): thread ctx.sourceId.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    return ctx.engine.getChunks(p.slug as string, sourceOpts);
+    return filterReadablePageBackedRows(ctx, await ctx.engine.getChunks(p.slug as string, sourceOpts), chunk => chunk.page_id);
   },
   scope: 'read',
 };
@@ -2131,7 +2168,13 @@ const get_ingest_log: Operation = {
     limit: { type: 'number', description: 'Max entries (default 20)' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getIngestLog({ limit: clampSearchLimit(p.limit as number | undefined, 20, 50) });
+    return filterReadablePageRefRows(
+      ctx,
+      await ctx.engine.getIngestLog({ limit: clampSearchLimit(p.limit as number | undefined, 20, 50) }),
+      row => Array.isArray(row.pages_updated)
+        ? row.pages_updated.map(slug => ({ slug, source_id: row.source_id }))
+        : [],
+    );
   },
   scope: 'read',
 };
@@ -2718,6 +2761,7 @@ const get_calibration_profile: Operation = {
     },
   },
   handler: async (ctx, p) => {
+    if (isCompanyReadFiltered(ctx)) return null;
     const { getCalibrationProfileOp } = await import('../commands/calibration.ts');
     return getCalibrationProfileOp(ctx, {
       ...(typeof p.holder === 'string' ? { holder: p.holder } : {}),
@@ -2755,12 +2799,12 @@ const get_recent_salience: Operation = {
   },
   handler: async (ctx, p) => {
     const recencyBias = p.recency_bias === 'on' ? 'on' : 'flat';
-    return ctx.engine.getRecentSalience({
+    return filterReadablePageRefRows(ctx, await ctx.engine.getRecentSalience({
       days: typeof p.days === 'number' ? p.days : undefined,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       slugPrefix: typeof p.slugPrefix === 'string' ? p.slugPrefix : undefined,
       recency_bias: recencyBias,
-    });
+    }), row => [{ slug: row.slug, source_id: row.source_id }]);
   },
   cliHints: { name: 'salience' },
 };
@@ -2784,11 +2828,11 @@ const find_anomalies: Operation = {
     },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.findAnomalies({
+    return filterReadableAnomalies(ctx, await ctx.engine.findAnomalies({
       since: typeof p.since === 'string' ? p.since : undefined,
       lookback_days: typeof p.lookback_days === 'number' ? p.lookback_days : undefined,
       sigma: typeof p.sigma === 'number' ? p.sigma : undefined,
-    });
+    }));
   },
   cliHints: { name: 'anomalies' },
 };
@@ -2890,11 +2934,15 @@ const find_contradictions: Operation = {
       }
       return true;
     });
+    const visible = await filterReadablePageRefRows(ctx, filtered, f => [
+      { slug: f.a.slug },
+      { slug: f.b.slug },
+    ]);
     return {
       run_id: latest.run_id,
       ran_at: latest.ran_at,
-      contradictions: filtered.slice(0, limit),
-      total_in_run: findings.length,
+      contradictions: visible.slice(0, limit),
+      total_in_run: visible.length,
     };
   },
   cliHints: { name: 'find-contradictions' },
@@ -2948,9 +2996,19 @@ const find_trajectory: Operation = {
     const limit  = typeof p.limit  === 'number' ? p.limit  : undefined;
     const scope = sourceScopeOpts(ctx);
 
+    if (!await isPageSlugReadableForCompany(ctx, p.entity_slug, undefined)) {
+      const { TRAJECTORY_SCHEMA_VERSION } = await import('./trajectory.ts');
+      return {
+        points: [],
+        regressions: [],
+        drift_score: 0,
+        schema_version: TRAJECTORY_SCHEMA_VERSION,
+      };
+    }
+
     // D-CDX-1: thread ctx.remote into the engine so visibility filtering
     // happens at SQL level. Mirrors recall's posture for untrusted callers.
-    const points = await ctx.engine.findTrajectory({
+    const points = await filterReadablePageRefRows(ctx, await ctx.engine.findTrajectory({
       entitySlug: p.entity_slug,
       ...scope,
       remote: ctx.remote === true,
@@ -2959,7 +3017,10 @@ const find_trajectory: Operation = {
       since,
       until,
       limit,
-    });
+    }), pt => [
+      { slug: p.entity_slug as string },
+      { slug: pt.source_markdown_slug },
+    ]);
 
     const { computeTrajectoryStats, TRAJECTORY_SCHEMA_VERSION } = await import('./trajectory.ts');
     const { regressions, drift_score } = computeTrajectoryStats(points);
@@ -3327,6 +3388,7 @@ const recall: Operation = {
     if (p.supersessions === true) {
       const since = parseSinceParam(p.since);
       rows = await ctx.engine.listSupersessions(sourceId, { since: since ?? undefined, limit });
+      if (visibility) rows = rows.filter(r => visibility.includes(r.visibility));
     } else if (typeof p.entity === 'string' && p.entity.length > 0) {
       const { resolveEntitySlug } = await import('./entities/resolve.ts');
       const slug = (await resolveEntitySlug(ctx.engine, sourceId, p.entity)) ?? p.entity;
@@ -3360,12 +3422,16 @@ const recall: Operation = {
     }
 
     if (grep) rows = rows.filter(r => r.fact.toLowerCase().includes(grep));
+    rows = await filterReadablePageRefRows(ctx, rows, r => [
+      { slug: r.entity_slug, source_id: r.source_id },
+      { slug: r.source_markdown_slug, source_id: r.source_id },
+    ]);
 
     // v0.32: optional pending-consolidation count piggy-backed on the recall
     // response. Single round trip on thin-client; omitted when not requested
     // so existing callers see no shape change.
     let pending_consolidation_count: number | undefined;
-    if (p.include_pending === true) {
+    if (p.include_pending === true && !isCompanyReadFiltered(ctx)) {
       try {
         pending_consolidation_count = await ctx.engine.countUnconsolidatedFacts(sourceId);
       } catch (e) {

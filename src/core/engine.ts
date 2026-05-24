@@ -412,6 +412,8 @@ export interface FactRow {
   id: number;
   source_id: string;
   entity_slug: string | null;
+  row_num?: number | null;
+  source_markdown_slug?: string | null;
   fact: string;
   kind: FactKind;
   visibility: FactVisibility;

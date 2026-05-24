@@ -258,6 +258,13 @@ export async function dispatchToolCall(
       isError: true,
     };
   }
+  if (op.localOnly && (opts.remote ?? true) !== false) {
+    const err = new OperationError(
+      'permission_denied',
+      `${name} is local-only and cannot be invoked by remote MCP callers.`,
+    );
+    return { content: [{ type: 'text', text: JSON.stringify(err.toJSON(), null, 2) }], isError: true };
+  }
 
   const ctx = buildOperationContext(engine, safeParams, opts);
   if (opts.companyRequestContext) {
