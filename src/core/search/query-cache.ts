@@ -32,6 +32,7 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, HybridSearchMeta } from '../types.ts';
+import { COMPANY_PRIMARY_SOURCE_ID, COMPANY_TRUST_MODE } from '../company-mode.ts';
 
 /** Default cosine similarity threshold for cache hits. */
 export const DEFAULT_SIMILARITY_THRESHOLD = 0.92;
@@ -61,6 +62,26 @@ export interface QueryCacheConfig {
   ttlSeconds?: number;
 }
 
+export interface CacheLookupOpts {
+  sourceId?: string;
+  knobsHash?: string;
+  /**
+   * When present, the caller is policy-scoped. The current cache key does not
+   * encode policy/source/user scope, so lookup/store must fail closed.
+   */
+  readablePolicyIds?: readonly string[];
+  secureCompanyRequest?: boolean;
+}
+
+export interface CacheStoreOpts extends CacheLookupOpts {
+  ttlSeconds?: number;
+}
+
+export interface CacheManagementOpts {
+  sourceId?: string;
+  excludeSourceIds?: readonly string[];
+}
+
 /**
  * Deterministic ID for a (query, source, knobsHash) tuple. Used as the primary
  * key so re-caching the exact same (query, mode, knobs) just bumps the row's
@@ -76,6 +97,10 @@ export function cacheRowId(queryText: string, sourceId: string, knobsHash = ''):
   const h = createHash('sha256');
   h.update(`${sourceId}::${queryText}::${knobsHash}`);
   return h.digest('hex').slice(0, 32);
+}
+
+export function isPolicyScopedCacheRequest(opts: Pick<CacheLookupOpts, 'readablePolicyIds' | 'secureCompanyRequest'> | undefined): boolean {
+  return opts?.secureCompanyRequest === true || opts?.readablePolicyIds !== undefined;
 }
 
 /**
@@ -125,9 +150,9 @@ export class SemanticQueryCache {
    */
   async lookup(
     queryEmbedding: Float32Array | null,
-    opts: { sourceId?: string; knobsHash?: string } = {},
+    opts: CacheLookupOpts = {},
   ): Promise<CacheLookupResult> {
-    if (!this.enabled || !queryEmbedding || queryEmbedding.length === 0) {
+    if (!this.enabled || isPolicyScopedCacheRequest(opts) || !queryEmbedding || queryEmbedding.length === 0) {
       return { hit: false };
     }
     const sourceId = opts.sourceId ?? 'default';
@@ -200,9 +225,9 @@ export class SemanticQueryCache {
     queryEmbedding: Float32Array | null,
     results: SearchResult[],
     meta: HybridSearchMeta,
-    opts: { sourceId?: string; ttlSeconds?: number; knobsHash?: string } = {},
+    opts: CacheStoreOpts = {},
   ): Promise<void> {
-    if (!this.enabled || !queryEmbedding || queryEmbedding.length === 0) return;
+    if (!this.enabled || isPolicyScopedCacheRequest(opts) || !queryEmbedding || queryEmbedding.length === 0) return;
     const sourceId = opts.sourceId ?? 'default';
     const knobsHash = opts.knobsHash ?? '';
     const ttl = clampTtl(opts.ttlSeconds ?? this.ttlSeconds);
@@ -241,14 +266,28 @@ export class SemanticQueryCache {
     }
   }
 
-  /** Clear ALL cache rows (optionally scoped by source). Returns rows deleted. */
-  async clear(opts: { sourceId?: string } = {}): Promise<number> {
+  /** Clear cache rows, optionally scoped by source or source exclusions. Returns rows deleted. */
+  async clear(opts: CacheManagementOpts = {}): Promise<number> {
     try {
+      const excludeSourceIds = normalizeSourceIds(opts.excludeSourceIds);
       if (opts.sourceId) {
+        if (excludeSourceIds.includes(opts.sourceId)) return 0;
         const rows = await this.engine.executeRaw<{ n: number }>(
           `WITH deleted AS (DELETE FROM query_cache WHERE source_id = $1 RETURNING 1)
            SELECT COUNT(*)::int AS n FROM deleted`,
           [opts.sourceId],
+        );
+        return rows[0]?.n ?? 0;
+      }
+      if (excludeSourceIds.length > 0) {
+        const rows = await this.engine.executeRaw<{ n: number }>(
+          `WITH deleted AS (
+             DELETE FROM query_cache
+              WHERE NOT (source_id = ANY($1::text[]))
+              RETURNING 1
+           )
+           SELECT COUNT(*)::int AS n FROM deleted`,
+          [excludeSourceIds],
         );
         return rows[0]?.n ?? 0;
       }
@@ -263,15 +302,19 @@ export class SemanticQueryCache {
   }
 
   /** Delete only stale (past-TTL) rows. Returns rows deleted. */
-  async prune(): Promise<number> {
+  async prune(opts: CacheManagementOpts = {}): Promise<number> {
     try {
+      const excludeSourceIds = normalizeSourceIds(opts.excludeSourceIds);
+      const sourceFilter = buildManagementSourceFilter(opts, excludeSourceIds);
       const rows = await this.engine.executeRaw<{ n: number }>(
         `WITH deleted AS (
            DELETE FROM query_cache
            WHERE created_at + (ttl_seconds || ' seconds')::interval <= now()
+             ${sourceFilter.sql}
            RETURNING 1
          )
          SELECT COUNT(*)::int AS n FROM deleted`,
+        sourceFilter.params,
       );
       return rows[0]?.n ?? 0;
     } catch {
@@ -280,8 +323,10 @@ export class SemanticQueryCache {
   }
 
   /** Summary stats for `gbrain cache stats`. */
-  async stats(): Promise<CacheStats> {
+  async stats(opts: CacheManagementOpts = {}): Promise<CacheStats> {
     try {
+      const excludeSourceIds = normalizeSourceIds(opts.excludeSourceIds);
+      const sourceFilter = buildManagementSourceFilter(opts, excludeSourceIds);
       const rows = await this.engine.executeRaw<{
         total_rows: number;
         total_hits: number;
@@ -293,7 +338,9 @@ export class SemanticQueryCache {
            COALESCE(SUM(hit_count), 0)::int AS total_hits,
            COUNT(*) FILTER (WHERE created_at + (ttl_seconds || ' seconds')::interval > now())::int AS fresh_rows,
            COUNT(*) FILTER (WHERE created_at + (ttl_seconds || ' seconds')::interval <= now())::int AS stale_rows
-         FROM query_cache`,
+         FROM query_cache
+         ${sourceFilter.sql ? `WHERE ${sourceFilter.sql.replace(/^\s*AND\s+/, '')}` : ''}`,
+        sourceFilter.params,
       );
       return rows[0] ?? { total_rows: 0, total_hits: 0, fresh_rows: 0, stale_rows: 0 };
     } catch {
@@ -330,6 +377,43 @@ function safeJsonParse<T>(value: unknown, fallback: T): T {
     return JSON.parse(value) as T;
   } catch {
     return fallback;
+  }
+}
+
+function normalizeSourceIds(sourceIds: readonly string[] | undefined): string[] {
+  if (!sourceIds) return [];
+  return [...new Set(sourceIds.map((id) => id.trim()).filter(Boolean))].sort();
+}
+
+function buildManagementSourceFilter(
+  opts: CacheManagementOpts,
+  excludeSourceIds: string[],
+): { sql: string; params: unknown[] } {
+  const params: unknown[] = [];
+  const clauses: string[] = [];
+  if (opts.sourceId) {
+    params.push(opts.sourceId);
+    clauses.push(`source_id = $${params.length}`);
+  }
+  if (excludeSourceIds.length > 0) {
+    params.push(excludeSourceIds);
+    clauses.push(`NOT (source_id = ANY($${params.length}::text[]))`);
+  }
+  return clauses.length === 0 ? { sql: '', params } : { sql: `AND ${clauses.join(' AND ')}`, params };
+}
+
+export async function secureCompanyCacheSourceIds(engine: BrainEngine): Promise<string[]> {
+  try {
+    const rows = await engine.executeRaw<{ key: string; value: string | null }>(
+      `SELECT key, value FROM config WHERE key = ANY($1::text[])`,
+      [['company.mode', 'company.primary_source_id']],
+    );
+    const values = new Map(rows.map((row) => [row.key, row.value ?? '']));
+    if (values.get('company.mode') !== COMPANY_TRUST_MODE) return [];
+    const sourceId = values.get('company.primary_source_id') || COMPANY_PRIMARY_SOURCE_ID;
+    return normalizeSourceIds([sourceId]);
+  } catch {
+    return [];
   }
 }
 

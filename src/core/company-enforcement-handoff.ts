@@ -67,7 +67,7 @@ export function buildCompanyEnforcementHandoff(): CompanyEnforcementHandoff {
     cache_strategy: {
       decision: 'disable_company_secure_cache_until_policy_safe_keys',
       current_policy_state:
-        'query_cache is keyed by source and search knobs only; company policy is represented but not applied to cache reads or writes.',
+        'query_cache remains keyed by source and search knobs for local/trusted paths; policy-scoped company retrieval disables cache lookup and writeback.',
       permission_enforcement_v1_rule:
         'For any hosted or secure company path, force cache off before candidate retrieval unless policy-safe keys and post-filtered cache rows are implemented.',
       policy_safe_key_plan: {

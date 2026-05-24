@@ -19,6 +19,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { SemanticQueryCache, cacheRowId } from '../src/core/search/query-cache.ts';
 import type { SearchResult } from '../src/core/types.ts';
 import { knobsHash, resolveSearchMode } from '../src/core/search/mode.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
@@ -27,6 +28,12 @@ const balancedHash = knobsHash(resolveSearchMode({ mode: 'balanced' }));
 const tokenmaxHash = knobsHash(resolveSearchMode({ mode: 'tokenmax' }));
 
 beforeAll(async () => {
+  resetGateway();
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: { OPENAI_API_KEY: 'sk-fake' },
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
@@ -34,6 +41,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  resetGateway();
 });
 
 beforeEach(async () => {

@@ -207,6 +207,29 @@ describe('SemanticQueryCache \u2014 source isolation', () => {
   });
 });
 
+describe('SemanticQueryCache \u2014 policy-scoped disable', () => {
+  test('policy-scoped lookup misses and policy-scoped store is a no-op', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(8);
+
+    await cache.store('policy-write', emb, [makeResult('hidden')], META, {
+      sourceId: 'company',
+      readablePolicyIds: ['engineering-notes'],
+    });
+    expect((await cache.stats()).total_rows).toBe(0);
+
+    await cache.store('policy-read', emb, [makeResult('cached')], META, { sourceId: 'company' });
+    const normalHit = await cache.lookup(emb, { sourceId: 'company' });
+    expect(normalHit.hit).toBe(true);
+
+    const scopedHit = await cache.lookup(emb, {
+      sourceId: 'company',
+      readablePolicyIds: ['engineering-notes'],
+    });
+    expect(scopedHit.hit).toBe(false);
+  });
+});
+
 describe('SemanticQueryCache \u2014 management', () => {
   test('clear() wipes all rows', async () => {
     const cache = new SemanticQueryCache(engine);
@@ -245,6 +268,29 @@ describe('SemanticQueryCache \u2014 management', () => {
     expect(stats.fresh_rows).toBe(1);
     expect(stats.stale_rows).toBe(0);
     expect(stats.total_hits).toBeGreaterThanOrEqual(1);
+  });
+
+  test('stats, clear, and prune can exclude protected sources', async () => {
+    const cache = new SemanticQueryCache(engine);
+    await cache.store('default', makeEmbedding(14), [makeResult('default')], META, { sourceId: 'default' });
+    await cache.store('company', makeEmbedding(15), [makeResult('company')], META, { sourceId: 'company' });
+
+    const visibleStats = await cache.stats({ excludeSourceIds: ['company'] });
+    expect(visibleStats.total_rows).toBe(1);
+
+    await engine.executeRaw(
+      `UPDATE query_cache SET created_at = now() - interval '10 seconds' WHERE source_id = 'company'`,
+    );
+    const pruned = await cache.prune({ excludeSourceIds: ['company'] });
+    expect(pruned).toBe(0);
+    expect((await cache.stats()).total_rows).toBe(2);
+
+    const cleared = await cache.clear({ excludeSourceIds: ['company'] });
+    expect(cleared).toBe(1);
+    const remaining = await engine.executeRaw<{ source_id: string }>(
+      `SELECT source_id FROM query_cache ORDER BY source_id`,
+    );
+    expect(remaining.map((row) => row.source_id)).toEqual(['company']);
   });
 });
 

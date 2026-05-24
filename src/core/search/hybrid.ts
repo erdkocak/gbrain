@@ -997,12 +997,15 @@ export async function hybridSearchCached(
   // Skip cache entirely when the request asks for two-pass walks, has
   // a non-default embedding column (per-call or via config default —
   // D8 closes the silent-corruption bug class), or near-symbol mode
-  // (structural state that the cache can't safely express).
+  // (structural state that the cache can't safely express). Policy-scoped
+  // and multi-source-list requests are also disabled because the existing
+  // cache key does not encode that full authorization/source scope.
   const skipCache =
     !cache.isEnabled() ||
     (opts?.walkDepth ?? 0) > 0 ||
     Boolean(opts?.nearSymbol) ||
     isNonDefaultColumn ||
+    opts?.sourceIds !== undefined ||
     opts?.readablePolicyIds !== undefined;
 
   let cacheStatus: 'hit' | 'miss' | 'disabled' = skipCache ? 'disabled' : 'miss';
@@ -1037,7 +1040,11 @@ export async function hybridSearchCached(
   }
 
   if (!skipCache && queryEmbedding && cacheStatus !== 'disabled') {
-    const hit = await cache.lookup(queryEmbedding, { sourceId: opts?.sourceId, knobsHash: cacheKnobsHash });
+    const hit = await cache.lookup(queryEmbedding, {
+      sourceId: opts?.sourceId,
+      knobsHash: cacheKnobsHash,
+      readablePolicyIds: opts?.readablePolicyIds,
+    });
     if (hit.hit && hit.results) {
       cacheStatus = 'hit';
       cacheSimilarity = hit.similarity;
@@ -1120,7 +1127,11 @@ export async function hybridSearchCached(
   ) {
     trackCacheWrite(
       cache
-        .store(query, queryEmbedding, results, finalMeta, { sourceId: opts?.sourceId, knobsHash: cacheKnobsHash })
+        .store(query, queryEmbedding, results, finalMeta, {
+          sourceId: opts?.sourceId,
+          knobsHash: cacheKnobsHash,
+          readablePolicyIds: opts?.readablePolicyIds,
+        })
         .catch(() => { /* swallow */ }),
     );
   }
