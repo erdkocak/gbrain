@@ -63,10 +63,10 @@ describe('gbrain init --company', () => {
       ]);
       expect(parsed.company.hosted_surface.skill_gate.advisory_only).toEqual(['brain-taxonomist']);
       expect(parsed.company.policy.seed.policies[0].id).toBe('company-trusted-workspace');
-      expect(parsed.company.policy.metadata.enforcement).toBe('not_enforced_stage_2a');
+      expect(parsed.company.policy.metadata.enforcement).toBe('represented_not_enforced');
       expect(parsed.company.policy.metadata.default_decision).toBe('deny');
-      expect(parsed.company.object_policy.stage).toBe('stage_2d_object_metadata_not_enforced');
-      expect(parsed.company.object_policy.enforcement).toBe('not_enforced_stage_2d');
+      expect(parsed.company.object_policy.kind).toBe('company_object_policy_metadata');
+      expect(parsed.company.object_policy.enforcement).toBe('represented_not_enforced');
       expect(parsed.company.object_policy.page_metadata_store).toBe('pages.frontmatter');
       expect(parsed.company.metadata_placeholders.visibility_policy_id).toBeNull();
       expect(parsed.company.schema_pack).toBe('gbrain-company');
@@ -93,7 +93,7 @@ describe('gbrain init --company', () => {
       expect(cfg.company.hosted_surface.disabled_surfaces).toContain('direct_db_credentials_for_normal_secure_users');
       expect(cfg.company.hosted_surface.disabled_surfaces).toContain('follow_up_external_execution');
       expect(cfg.company.policy.seed.path_defaults[0].visibility_policy_id).toBe('company-trusted-workspace');
-      expect(cfg.company.policy.metadata.enforcement).toBe('not_enforced_stage_2a');
+      expect(cfg.company.policy.metadata.enforcement).toBe('represented_not_enforced');
       expect(cfg.company.object_policy.related_storage_plan.map((entry: any) => entry.surface)).toContain('content_chunks');
 
       const mode = await runCli(['config', 'get', 'company.mode'], home);
@@ -126,24 +126,24 @@ describe('gbrain init --company', () => {
 
       const policyEnforcement = await runCli(['config', 'get', 'company.policy.enforcement'], home);
       expect(policyEnforcement.exitCode).toBe(0);
-      expect(policyEnforcement.stdout.trim()).toBe('not_enforced_stage_2a');
+      expect(policyEnforcement.stdout.trim()).toBe('represented_not_enforced');
 
       const objectPolicy = await runCli(['config', 'get', 'company.object_policy'], home);
       expect(objectPolicy.exitCode).toBe(0);
-      expect(JSON.parse(objectPolicy.stdout).enforcement).toBe('not_enforced_stage_2d');
+      expect(JSON.parse(objectPolicy.stdout).enforcement).toBe('represented_not_enforced');
 
       const companyHelp = await runCli(['company', '--help'], home);
       expect(companyHelp.exitCode).toBe(0);
       expect(companyHelp.stdout).toContain('gbrain company policy seed');
-      expect(companyHelp.stdout).toContain('not fully enforced until Stage 3');
+      expect(companyHelp.stdout).toContain('not yet fully enforced');
 
       const policySeedInspect = await runCli(['company', 'policy', 'seed', '--json'], home);
       expect(policySeedInspect.exitCode).toBe(0);
       const policySeedParsed = JSON.parse(policySeedInspect.stdout);
-      expect(policySeedParsed.stage).toBe('stage_2e_policy_inspection_not_enforced');
-      expect(policySeedParsed.guardrail).toContain('not fully enforced until Stage 3');
+      expect(policySeedParsed.kind).toBe('company_policy_inspection');
+      expect(policySeedParsed.guardrail).toContain('not yet fully enforced');
       expect(policySeedParsed.policy_storage.default_decision).toBe('deny');
-      expect(policySeedParsed.policy_storage.enforcement).toBe('not_enforced_stage_2a');
+      expect(policySeedParsed.policy_storage.enforcement).toBe('represented_not_enforced');
       expect(policySeedParsed.surface_summary.hosted_skill_default).toBe('deny');
       expect(policySeedParsed.hosted_surface.disabled_surfaces).toContain('direct_db_credentials_for_normal_secure_users');
       expect(policySeedParsed.hosted_surface.disabled_surfaces).toContain('hosted_writes_for_normal_users');
@@ -151,7 +151,7 @@ describe('gbrain init --company', () => {
       const policyGrants = await runCli(['company', 'policy', 'grants', 'company-pilot-user', '--json'], home);
       expect(policyGrants.exitCode).toBe(0);
       const policyGrantsParsed = JSON.parse(policyGrants.stdout);
-      expect(policyGrantsParsed.guardrail).toContain('not fully enforced until Stage 3');
+      expect(policyGrantsParsed.guardrail).toContain('not yet fully enforced');
       expect(policyGrantsParsed.effective_grants.known_user).toBe(true);
       expect(policyGrantsParsed.effective_grants.group_ids).toEqual(['company-pilot-admins']);
       expect(policyGrantsParsed.effective_grants.readable_policy_ids).toEqual(['company-trusted-workspace']);
@@ -160,7 +160,7 @@ describe('gbrain init --company', () => {
       const policyContext = await runCli(['company', 'policy', 'context', '--user-id', 'company-pilot-user', '--json'], home);
       expect(policyContext.exitCode).toBe(0);
       const policyContextParsed = JSON.parse(policyContext.stdout);
-      expect(policyContextParsed.guardrail).toContain('not fully enforced until Stage 3');
+      expect(policyContextParsed.guardrail).toContain('not yet fully enforced');
       expect(policyContextParsed.request_context.identityStatus).toBe('resolved');
       expect(policyContextParsed.request_context.userId).toBe('company-pilot-user');
       expect(policyContextParsed.request_context.readablePolicyIds).toEqual(['company-trusted-workspace']);
@@ -168,7 +168,7 @@ describe('gbrain init --company', () => {
 
       const policyContextHuman = await runCli(['company', 'policy', 'context', '--user-id', 'company-pilot-user'], home);
       expect(policyContextHuman.exitCode).toBe(0);
-      expect(policyContextHuman.stdout).toContain('not fully enforced until Stage 3');
+      expect(policyContextHuman.stdout).toContain('not yet fully enforced');
 
       const layout = await runCli(['config', 'get', 'company.layout'], home);
       expect(layout.exitCode).toBe(0);

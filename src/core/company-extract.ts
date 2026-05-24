@@ -134,7 +134,7 @@ export async function extractCompanyMemory(
 
     const artifacts = extractArtifactsFromPage(page);
     if (artifacts.length === 0) {
-      result.skipped.push({ slug, reason: 'no_stage_1d_patterns' });
+      result.skipped.push({ slug, reason: 'no_extraction_patterns' });
       continue;
     }
 
@@ -439,7 +439,7 @@ function buildArtifactMarkdown(artifact: Artifact, ctx: WorkspaceContext, slug: 
     source_quote: artifact.quote,
     projects: artifact.projects,
     captured_at: ctx.capturedAt,
-    extraction_stage: 'stage-1d-local',
+    extraction_kind: COMPANY_EXTRACTION_KIND,
     extraction_method: 'deterministic-local-patterns',
   }, {
     objectType: artifact.kind,
@@ -512,7 +512,7 @@ function decisionBody(artifact: Artifact): string {
     '',
     '## Follow Up',
     '',
-    'Stage 1D records candidates only; external execution and policy enforcement are deferred.',
+    'Local extraction records candidates only; external execution and policy enforcement are deferred.',
   ].join('\n');
 }
 
@@ -528,7 +528,7 @@ function commitmentBody(artifact: Artifact): string {
     '',
     '## Updates',
     '',
-    'Open trusted-workspace commitment extracted locally in Stage 1D.',
+    'Open trusted-workspace commitment extracted locally.',
   ].join('\n');
 }
 

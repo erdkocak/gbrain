@@ -13,7 +13,7 @@ import {
   assignCompanyObjectPolicyMetadata,
   buildCompanyObjectPolicyConfig,
   COMPANY_OBJECT_POLICY_ENFORCEMENT,
-  COMPANY_OBJECT_POLICY_STAGE,
+  COMPANY_OBJECT_POLICY_KIND,
   inferCompanyObjectTypeFromSlug,
   resolveCompanyObjectVisibility,
   resolveCompanyPathDefaultVisibility,
@@ -122,7 +122,7 @@ describe('company object policy metadata defaults', () => {
     expect(assigned.created_by).toBe('alice-example');
     expect(assigned.derived_from).toEqual(['evidence/source-a']);
     expect(assigned.evidence_refs).toEqual(['evidence/source-a', 'evidence/source-b']);
-    expect(assigned.object_policy_metadata_stage).toBe(COMPANY_OBJECT_POLICY_STAGE);
+    expect(assigned.object_policy_metadata_kind).toBe(COMPANY_OBJECT_POLICY_KIND);
     expect(assigned.object_policy_enforcement).toBe(COMPANY_OBJECT_POLICY_ENFORCEMENT);
     expect(assigned.policy_enforcement).toBe('deferred');
     expect(assigned.trusted_workspace_artifact).toBe(true);
@@ -164,7 +164,7 @@ describe('company object policy metadata defaults', () => {
     expect(fallback.reason).toBe('empty_intersection');
   });
 
-  test('persists Stage 2D storage plan without claiming enforcement', async () => {
+  test('persists object policy storage plan without claiming enforcement', async () => {
     const calls: Array<{ sql: string; params: unknown[] }> = [];
     const configSet: Record<string, string> = {};
     const engine = {
@@ -179,7 +179,7 @@ describe('company object policy metadata defaults', () => {
 
     const config = await applyCompanyObjectPolicyConfig(engine, fixtureStorage());
 
-    expect(config.stage).toBe(COMPANY_OBJECT_POLICY_STAGE);
+    expect(config.kind).toBe(COMPANY_OBJECT_POLICY_KIND);
     expect(config.enforcement).toBe(COMPANY_OBJECT_POLICY_ENFORCEMENT);
     expect(config.path_defaults.length).toBeGreaterThanOrEqual(COMPANY_OBJECT_TYPES.length);
     expect(config.related_storage_plan.map((entry) => entry.surface)).toEqual([
@@ -195,13 +195,13 @@ describe('company object policy metadata defaults', () => {
       'job_outputs',
       'future_audit_rows',
     ]);
-    expect(config.related_storage_plan.find((entry) => entry.surface === 'pages')?.stage_2d_gap).toBeNull();
-    expect(config.related_storage_plan.find((entry) => entry.surface === 'content_chunks')?.stage_2d_gap).toContain('No chunk-level policy column');
+    expect(config.related_storage_plan.find((entry) => entry.surface === 'pages')?.known_gap).toBeNull();
+    expect(config.related_storage_plan.find((entry) => entry.surface === 'content_chunks')?.known_gap).toContain('No chunk-level policy column');
     expect(JSON.parse(configSet['company.object_policy']!).enforcement).toBe(COMPANY_OBJECT_POLICY_ENFORCEMENT);
     expect(JSON.parse(configSet['company.object_policy.related_storage_plan']!)).toHaveLength(config.related_storage_plan.length);
 
     const sourcePatch = JSON.parse(calls.find((call) => call.sql.includes('UPDATE sources'))!.params[0] as string);
-    expect(sourcePatch.company_object_policy_stage).toBe(COMPANY_OBJECT_POLICY_STAGE);
+    expect(sourcePatch.company_object_policy_kind).toBe(COMPANY_OBJECT_POLICY_KIND);
     expect(sourcePatch.company_object_policy_enforcement).toBe(COMPANY_OBJECT_POLICY_ENFORCEMENT);
 
     const direct = buildCompanyObjectPolicyConfig(fixtureStorage());

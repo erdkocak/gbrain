@@ -14,8 +14,8 @@ import {
 } from './company-policy-evaluator.ts';
 import type { Page } from './types.ts';
 
-export const COMPANY_OBJECT_POLICY_STAGE = 'stage_2d_object_metadata_not_enforced';
-export const COMPANY_OBJECT_POLICY_ENFORCEMENT = 'not_enforced_stage_2d';
+export const COMPANY_OBJECT_POLICY_KIND = 'company_object_policy_metadata';
+export const COMPANY_OBJECT_POLICY_ENFORCEMENT = 'represented_not_enforced';
 export const COMPANY_OBJECT_POLICY_SCHEMA_VERSION = 1;
 
 export type CompanyVisibilityAssignment =
@@ -50,13 +50,13 @@ export type CompanyRelatedPolicySurface =
 export interface CompanyRelatedPolicyStoragePlan {
   surface: CompanyRelatedPolicySurface;
   current_storage: string;
-  stage_2d_rule: string;
-  stage_2d_gap: string | null;
+  assignment_rule: string;
+  known_gap: string | null;
 }
 
 export interface CompanyObjectPolicyConfig {
   schema_version: typeof COMPANY_OBJECT_POLICY_SCHEMA_VERSION;
-  stage: typeof COMPANY_OBJECT_POLICY_STAGE;
+  kind: typeof COMPANY_OBJECT_POLICY_KIND;
   enforcement: typeof COMPANY_OBJECT_POLICY_ENFORCEMENT;
   page_metadata_store: 'pages.frontmatter';
   default_policy_id: typeof COMPANY_DEFAULT_POLICY_ID;
@@ -102,68 +102,68 @@ const RELATED_STORAGE_PLAN: CompanyRelatedPolicyStoragePlan[] = [
   {
     surface: 'pages',
     current_storage: 'pages.frontmatter.visibility_policy_id plus created_by, derived_from, evidence_refs',
-    stage_2d_rule: 'Company page writes store object policy metadata directly in page frontmatter.',
-    stage_2d_gap: null,
+    assignment_rule: 'Company page writes store object policy metadata directly in page frontmatter.',
+    known_gap: null,
   },
   {
     surface: 'content_chunks',
     current_storage: 'content_chunks.page_id -> pages.frontmatter',
-    stage_2d_rule: 'Chunks inherit visibility from their owning page through page_id.',
-    stage_2d_gap: 'No chunk-level policy column exists yet; Stage 3 must join through pages before retrieval/rerank exposure.',
+    assignment_rule: 'Chunks inherit visibility from their owning page through page_id.',
+    known_gap: 'No chunk-level policy column exists yet; permission enforcement must join through pages before retrieval/rerank exposure.',
   },
   {
     surface: 'links',
     current_storage: 'links.from_page_id/to_page_id -> pages.frontmatter; link_source/origin fields are provenance-only',
-    stage_2d_rule: 'Link visibility is derived from the linked pages; derived link outputs use the intersection rule.',
-    stage_2d_gap: 'No dedicated link policy column exists yet; Stage 3 graph traversal must enforce by joining both endpoint pages.',
+    assignment_rule: 'Link visibility is derived from the linked pages; derived link outputs use the intersection rule.',
+    known_gap: 'No dedicated link policy column exists yet; permission-enforced graph traversal must join both endpoint pages.',
   },
   {
     surface: 'timeline_entries',
     current_storage: 'timeline_entries.page_id -> pages.frontmatter',
-    stage_2d_rule: 'Timeline entries inherit visibility from their owning page.',
-    stage_2d_gap: 'No timeline-entry policy column exists yet; Stage 3 temporal reads must join through pages.',
+    assignment_rule: 'Timeline entries inherit visibility from their owning page.',
+    known_gap: 'No timeline-entry policy column exists yet; permission-enforced temporal reads must join through pages.',
   },
   {
     surface: 'facts',
     current_storage: 'facts.source_markdown_slug/source_id and markdown facts fences -> pages.frontmatter',
-    stage_2d_rule: 'Facts inherit visibility from their source markdown page or owning entity page; multi-source derived facts use intersection.',
-    stage_2d_gap: 'Facts rows do not carry object policy metadata directly yet; Stage 3 fact reads must resolve source/owner page visibility.',
+    assignment_rule: 'Facts inherit visibility from their source markdown page or owning entity page; multi-source derived facts use intersection.',
+    known_gap: 'Facts rows do not carry object policy metadata directly yet; permission-enforced fact reads must resolve source/owner page visibility.',
   },
   {
     surface: 'takes',
     current_storage: 'takes source fields and cited pages -> pages.frontmatter',
-    stage_2d_rule: 'Takes inherit/intersect visibility from cited/source pages.',
-    stage_2d_gap: 'Takes tables do not carry a durable policy id column yet; Stage 3 takes retrieval must enforce through source evidence.',
+    assignment_rule: 'Takes inherit/intersect visibility from cited/source pages.',
+    known_gap: 'Takes tables do not carry a durable policy id column yet; permission-enforced takes retrieval must resolve through source evidence.',
   },
   {
     surface: 'raw_data',
     current_storage: 'raw_data.page_id -> pages.frontmatter',
-    stage_2d_rule: 'Raw sidecar rows inherit visibility from their owning page.',
-    stage_2d_gap: 'No raw_data policy column exists yet; Stage 3 sidecar reads must join through pages.',
+    assignment_rule: 'Raw sidecar rows inherit visibility from their owning page.',
+    known_gap: 'No raw_data policy column exists yet; permission-enforced sidecar reads must join through pages.',
   },
   {
     surface: 'files',
     current_storage: 'files.metadata plus page_id/page_slug -> pages.frontmatter',
-    stage_2d_rule: 'Files inherit visibility from their attached page; unattached files require explicit metadata before secure exposure.',
-    stage_2d_gap: 'Existing file rows may be unattached; Stage 3 file APIs must reject or classify unattached files before secure reads.',
+    assignment_rule: 'Files inherit visibility from their attached page; unattached files require explicit metadata before secure exposure.',
+    known_gap: 'Existing file rows may be unattached; permission-enforced file APIs must reject or classify unattached files before secure reads.',
   },
   {
     surface: 'synthesis_evidence',
     current_storage: 'derived pages/evidence refs -> pages.frontmatter',
-    stage_2d_rule: 'Synthesis evidence uses the derived visibility rule over every cited input page.',
-    stage_2d_gap: 'Synthesis-specific policy columns are deferred; Stage 3 derived-memory writers must store the resolved page metadata.',
+    assignment_rule: 'Synthesis evidence uses the derived visibility rule over every cited input page.',
+    known_gap: 'Synthesis-specific policy columns are deferred; permission-enforced derived-memory writers must store the resolved page metadata.',
   },
   {
     surface: 'job_outputs',
     current_storage: 'minion job payloads/artifacts and optional output pages',
-    stage_2d_rule: 'Job outputs that become pages store page frontmatter metadata; non-page artifacts inherit from the request/job policy context.',
-    stage_2d_gap: 'Minion job rows and attachments do not have a stable object policy column yet; hosted job exposure remains disabled.',
+    assignment_rule: 'Job outputs that become pages store page frontmatter metadata; non-page artifacts inherit from the request/job policy context.',
+    known_gap: 'Minion job rows and attachments do not have a stable object policy column yet; hosted job exposure remains disabled.',
   },
   {
     surface: 'future_audit_rows',
-    current_storage: 'not created in Stage 2D',
-    stage_2d_rule: 'Future audit rows should copy request id, user id, policy decision id, policy version/hash, and target visibility policy id.',
-    stage_2d_gap: 'Append-only audit storage is Stage 4 work.',
+    current_storage: 'not created yet',
+    assignment_rule: 'Future audit rows should copy request id, user id, policy decision id, policy version/hash, and target visibility policy id.',
+    known_gap: 'Append-only audit storage is audit-hardening work.',
   },
 ];
 
@@ -193,7 +193,7 @@ export function buildCompanyObjectPolicyConfig(
 
   return {
     schema_version: COMPANY_OBJECT_POLICY_SCHEMA_VERSION,
-    stage: COMPANY_OBJECT_POLICY_STAGE,
+    kind: COMPANY_OBJECT_POLICY_KIND,
     enforcement: COMPANY_OBJECT_POLICY_ENFORCEMENT,
     page_metadata_store: 'pages.frontmatter',
     default_policy_id: COMPANY_DEFAULT_POLICY_ID,
@@ -210,7 +210,7 @@ export async function applyCompanyObjectPolicyConfig(
 ): Promise<CompanyObjectPolicyConfig> {
   const config = buildCompanyObjectPolicyConfig(storage);
   await engine.setConfig('company.object_policy', JSON.stringify(config));
-  await engine.setConfig('company.object_policy.stage', config.stage);
+  await engine.setConfig('company.object_policy.kind', config.kind);
   await engine.setConfig('company.object_policy.enforcement', config.enforcement);
   await engine.setConfig('company.object_policy.path_defaults', JSON.stringify(config.path_defaults));
   await engine.setConfig('company.object_policy.related_storage_plan', JSON.stringify(config.related_storage_plan));
@@ -220,7 +220,7 @@ export async function applyCompanyObjectPolicyConfig(
         SET config = config || $1::jsonb
       WHERE id = $2`,
     [JSON.stringify({
-      company_object_policy_stage: config.stage,
+      company_object_policy_kind: config.kind,
       company_object_policy_enforcement: config.enforcement,
       company_object_policy_page_metadata_store: config.page_metadata_store,
       company_object_policy_path_defaults: config.path_defaults,
@@ -265,7 +265,7 @@ export function assignCompanyObjectPolicyMetadata(
       : arrayOfStrings(frontmatter.evidence_refs),
     trusted_workspace_artifact: frontmatter.trusted_workspace_artifact ?? true,
     policy_enforcement: frontmatter.policy_enforcement ?? 'deferred',
-    object_policy_metadata_stage: COMPANY_OBJECT_POLICY_STAGE,
+    object_policy_metadata_kind: COMPANY_OBJECT_POLICY_KIND,
     object_policy_enforcement: COMPANY_OBJECT_POLICY_ENFORCEMENT,
     visibility_assignment: resolution.assignment,
     visibility_assignment_reason: resolution.reason,

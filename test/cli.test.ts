@@ -6,6 +6,14 @@ import { join } from 'path';
 // Read cli.ts source for structural checks
 const cliSource = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf-8');
 const repoRoot = new URL('..', import.meta.url).pathname;
+const internalPlanningLabels = new RegExp([
+  '\\b' + 'stage' + '\\b',
+  'stage' + '[_ -]?[0-9]',
+  'stage' + '3',
+  'stage' + '-3',
+  'stage' + '_3',
+  'stage' + '_4',
+].join('|'), 'i');
 
 function isolatedEnv(home: string): Record<string, string> {
   const env: Record<string, string> = {};
@@ -212,12 +220,40 @@ describe('CLI dispatch integration', () => {
       expect(stdout).toContain('gbrain company follow-up draft');
       expect(stdout).toContain('gbrain company hosted-surface');
       expect(stdout).toContain('gbrain company policy seed');
-      expect(stdout).toContain('not fully enforced until Stage 3');
+      expect(stdout).toContain('gbrain company enforcement-handoff');
+      expect(stdout).toContain('not yet fully enforced');
       expect(stdout).toContain('trusted workspace pilot');
       expect(stdout).toContain('do not start live integrations');
       expect(stdout).toContain('does not send email');
       expect(stdout).toContain('deny-by-');
       expect(stdout).toContain('query cache');
+      expect(stdout).not.toMatch(internalPlanningLabels);
+      expect(existsSync(join(home, '.gbrain', 'config.json'))).toBe(false);
+      expect(exitCode).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('company enforcement-handoff prints permission plan without DB connection', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-help-'));
+    try {
+      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'company', 'enforcement-handoff', '--json'], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      const stdout = await new Response(proc.stdout).text();
+      const exitCode = await proc.exited;
+      const parsed = JSON.parse(stdout);
+      expect(parsed.kind).toBe('company_enforcement_handoff');
+      expect(parsed.guardrail).toContain('not yet fully enforced');
+      expect(parsed.cache_strategy.decision).toBe('disable_company_secure_cache_until_policy_safe_keys');
+      expect(parsed.first_hooks.map((hook: any) => hook.id)).toContain('search-before-rerank');
+      expect(parsed.first_hooks.map((hook: any) => hook.id)).toContain('skill-gate');
+      expect(parsed.residual_risks.map((risk: any) => risk.owner)).toContain('audit_hardening');
+      expect(stdout).not.toMatch(internalPlanningLabels);
       expect(existsSync(join(home, '.gbrain', 'config.json'))).toBe(false);
       expect(exitCode).toBe(0);
     } finally {

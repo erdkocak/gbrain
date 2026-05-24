@@ -8,12 +8,12 @@ import {
   buildDefaultCompanyPolicySeed,
   CompanyPolicySeedError,
   COMPANY_POLICY_DEFAULT_DECISION,
-  COMPANY_POLICY_ENFORCEMENT_STAGE,
+  COMPANY_POLICY_ENFORCEMENT_STATUS,
   parseCompanyPolicySeedYaml,
 } from '../src/core/company-policy.ts';
 
 describe('company policy storage seed', () => {
-  test('default seed is compatible with the Stage 1 trusted-workspace policy id', () => {
+  test('default seed is compatible with the trusted-workspace policy id', () => {
     const seed = buildDefaultCompanyPolicySeed();
     const storage = buildCompanyPolicyStorage(seed);
     const metadata = buildCompanyPolicyMetadata(seed);
@@ -24,7 +24,7 @@ describe('company policy storage seed', () => {
     expect(seed.egress.external_model).toBe('disabled_by_default');
     expect(seed.egress.external_web).toBe('disabled_by_default');
 
-    expect(storage.enforcement).toBe(COMPANY_POLICY_ENFORCEMENT_STAGE);
+    expect(storage.enforcement).toBe(COMPANY_POLICY_ENFORCEMENT_STATUS);
     expect(storage.default_decision).toBe(COMPANY_POLICY_DEFAULT_DECISION);
     expect(storage.default_policy_id).toBe(COMPANY_DEFAULT_POLICY_ID);
     expect(storage.group_memberships).toEqual([
@@ -35,10 +35,10 @@ describe('company policy storage seed', () => {
       { principal_type: 'group', principal_id: 'company-pilot-admins', policy_id: COMPANY_DEFAULT_POLICY_ID, permission: 'write' },
     ]);
 
-    expect(metadata.enforcement).toBe(COMPANY_POLICY_ENFORCEMENT_STAGE);
+    expect(metadata.enforcement).toBe(COMPANY_POLICY_ENFORCEMENT_STATUS);
     expect(metadata.default_decision).toBe(COMPANY_POLICY_DEFAULT_DECISION);
     expect(metadata.policy_hash).toMatch(/^[a-f0-9]{64}$/);
-    expect(metadata.policy_version).toMatch(/^stage-2a-v1-[a-f0-9]{12}$/);
+    expect(metadata.policy_version).toMatch(/^company-policy-v1-[a-f0-9]{12}$/);
   });
 
   test('parses YAML seed shape and defaults missing grants to deny', () => {
@@ -195,19 +195,19 @@ audit:
 
     const result = await applyCompanyPolicySeed(engine);
 
-    expect(JSON.parse(configSet['company.policy']!).metadata.enforcement).toBe(COMPANY_POLICY_ENFORCEMENT_STAGE);
+    expect(JSON.parse(configSet['company.policy']!).metadata.enforcement).toBe(COMPANY_POLICY_ENFORCEMENT_STATUS);
     expect(JSON.parse(configSet['company.policy.seed']!).policies[0].id).toBe(COMPANY_DEFAULT_POLICY_ID);
     expect(JSON.parse(configSet['company.policy.storage']!).default_decision).toBe('deny');
-    expect(JSON.parse(configSet['company.policy.metadata']!).enforcement).toBe(COMPANY_POLICY_ENFORCEMENT_STAGE);
+    expect(JSON.parse(configSet['company.policy.metadata']!).enforcement).toBe(COMPANY_POLICY_ENFORCEMENT_STATUS);
     expect(configSet['company.policy.default_policy_id']).toBe(COMPANY_DEFAULT_POLICY_ID);
     expect(configSet['company.policy.default_decision']).toBe('deny');
-    expect(configSet['company.policy.enforcement']).toBe(COMPANY_POLICY_ENFORCEMENT_STAGE);
+    expect(configSet['company.policy.enforcement']).toBe(COMPANY_POLICY_ENFORCEMENT_STATUS);
     expect(configSet['company.policy.version']).toBe(result.metadata.policy_version);
     expect(configSet['company.policy.hash']).toBe(result.metadata.policy_hash);
 
     const sourceUpdate = calls.find((call) => call.sql.includes('UPDATE sources'));
     expect(sourceUpdate).toBeDefined();
     expect(sourceUpdate?.params[1]).toBe('company');
-    expect(JSON.parse(sourceUpdate?.params[0] as string).company_policy_enforcement).toBe(COMPANY_POLICY_ENFORCEMENT_STAGE);
+    expect(JSON.parse(sourceUpdate?.params[0] as string).company_policy_enforcement).toBe(COMPANY_POLICY_ENFORCEMENT_STATUS);
   });
 });

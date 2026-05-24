@@ -1,15 +1,15 @@
 import { createHash } from 'node:crypto';
 import {
   COMPANY_POLICY_DEFAULT_DECISION,
-  COMPANY_POLICY_ENFORCEMENT_STAGE,
+  COMPANY_POLICY_ENFORCEMENT_STATUS,
   type CompanyPolicyMetadata,
   type CompanyPolicyPermission,
   type CompanyPolicyStorage,
 } from './company-policy.ts';
 import { COMPANY_DEFAULT_POLICY_ID } from './company-layout.ts';
 
-export const COMPANY_POLICY_EVALUATOR_STAGE = 'stage_2b_resolved_not_enforced';
-export const COMPANY_POLICY_NESTED_GROUP_BEHAVIOR = 'rejected_by_seed_validator_stage_2a';
+export const COMPANY_POLICY_EVALUATOR_KIND = 'company_policy_evaluation';
+export const COMPANY_POLICY_NESTED_GROUP_BEHAVIOR = 'rejected_by_seed_validator';
 
 export type CompanyPolicyDecision = 'allow' | 'deny';
 export type CompanyDerivedVisibilityDecision = 'inherit' | 'intersect' | 'reject';
@@ -31,8 +31,8 @@ export interface CompanyPolicyResolverMetadata {
   schema_version: CompanyPolicyStorage['schema_version'];
   default_policy_id: typeof COMPANY_DEFAULT_POLICY_ID;
   default_decision: typeof COMPANY_POLICY_DEFAULT_DECISION;
-  enforcement: typeof COMPANY_POLICY_ENFORCEMENT_STAGE;
-  evaluator_stage: typeof COMPANY_POLICY_EVALUATOR_STAGE;
+  enforcement: typeof COMPANY_POLICY_ENFORCEMENT_STATUS;
+  evaluator_kind: typeof COMPANY_POLICY_EVALUATOR_KIND;
 }
 
 export interface CompanyPolicyDecisionSet {
@@ -52,7 +52,7 @@ export interface CompanyPolicyUserEvaluation extends CompanyPolicyResolverMetada
 }
 
 export interface CompanyDerivedVisibilityResolution {
-  evaluator_stage: typeof COMPANY_POLICY_EVALUATOR_STAGE;
+  evaluator_kind: typeof COMPANY_POLICY_EVALUATOR_KIND;
   decision: CompanyDerivedVisibilityDecision;
   reason: 'single_input_inherits' | 'multiple_inputs_intersect' | 'no_inputs' | 'no_input_policies' | 'empty_intersection';
   input_count: number;
@@ -126,13 +126,13 @@ export function buildCompanyPolicyResolverMetadata(
   });
 
   return {
-    policy_version: metadata?.policy_version ?? `stage-2b-storage-v${storage.schema_version}-${policyHash.slice(0, 12)}`,
+    policy_version: metadata?.policy_version ?? `company-policy-storage-v${storage.schema_version}-${policyHash.slice(0, 12)}`,
     policy_hash: policyHash,
     schema_version: storage.schema_version,
     default_policy_id: COMPANY_DEFAULT_POLICY_ID,
     default_decision: COMPANY_POLICY_DEFAULT_DECISION,
-    enforcement: COMPANY_POLICY_ENFORCEMENT_STAGE,
-    evaluator_stage: COMPANY_POLICY_EVALUATOR_STAGE,
+    enforcement: COMPANY_POLICY_ENFORCEMENT_STATUS,
+    evaluator_kind: COMPANY_POLICY_EVALUATOR_KIND,
   };
 }
 
@@ -197,7 +197,7 @@ function validateStorageForEvaluation(storage: CompanyPolicyStorage): void {
   if (nestedGroups.length > 0) {
     throw new CompanyPolicyEvaluationError(
       'nested_groups_not_supported',
-      `Nested groups are not supported in Stage 2B policy evaluation: ${nestedGroups.join(', ')}`,
+      `Nested groups are not supported in company policy evaluation: ${nestedGroups.join(', ')}`,
       nestedGroups.map((groupId) => `groups.${groupId}.groups is not supported`),
     );
   }
@@ -244,7 +244,7 @@ function derivedVisibilityResolution(
   visibilityPolicyIds: string[],
 ): CompanyDerivedVisibilityResolution {
   return {
-    evaluator_stage: COMPANY_POLICY_EVALUATOR_STAGE,
+    evaluator_kind: COMPANY_POLICY_EVALUATOR_KIND,
     decision,
     reason,
     input_count: inputCount,

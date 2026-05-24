@@ -238,10 +238,10 @@ export interface AuthInfo {
    */
   clientName?: string;
   /**
-   * Stage 2C company-brain identity hints. OAuth/IdP middleware can thread
+   * Company-brain identity hints. OAuth/IdP middleware can thread
    * these when it has a human subject; client_credentials callers can still
    * map through company policy seed idp_subjects such as oauth-client:<id>.
-   * These fields are context only until Stage 3 enforcement lands.
+   * These fields are context only until permission enforcement lands.
    */
   companyUserId?: string;
   userEmail?: string;
@@ -398,9 +398,9 @@ export interface OperationContext {
    */
   sourceId: string;
   /**
-   * Stage 2C company-brain request context. This carries resolved identity,
+   * Company-brain request context. This carries resolved identity,
    * source routing, and policy-evaluator outputs for later enforcement/audit
-   * stages. Presence of this object does not enforce policy by itself.
+   * phases. Presence of this object does not enforce policy by itself.
    */
   companyRequestContext?: CompanyRequestContext;
 }

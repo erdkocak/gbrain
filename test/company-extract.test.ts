@@ -9,7 +9,7 @@ import { applyCompanyLayout, COMPANY_DEFAULT_POLICY_ID } from '../src/core/compa
 import { applyCompanyPolicySeed } from '../src/core/company-policy.ts';
 import {
   COMPANY_OBJECT_POLICY_ENFORCEMENT,
-  COMPANY_OBJECT_POLICY_STAGE,
+  COMPANY_OBJECT_POLICY_KIND,
 } from '../src/core/company-object-policy.ts';
 import { ingestCompanyDoc, ingestCompanyMeeting } from '../src/core/company-ingest.ts';
 import {
@@ -92,7 +92,7 @@ describe('company extraction', () => {
     expect(decision?.type).toBe('decision');
     expect(decision?.frontmatter.visibility_policy_id).toBe(COMPANY_DEFAULT_POLICY_ID);
     expect(decision?.frontmatter.visibility_policy_ids).toEqual([COMPANY_DEFAULT_POLICY_ID]);
-    expect(decision?.frontmatter.object_policy_metadata_stage).toBe(COMPANY_OBJECT_POLICY_STAGE);
+    expect(decision?.frontmatter.object_policy_metadata_kind).toBe(COMPANY_OBJECT_POLICY_KIND);
     expect(decision?.frontmatter.object_policy_enforcement).toBe(COMPANY_OBJECT_POLICY_ENFORCEMENT);
     expect(decision?.frontmatter.visibility_assignment).toBe('derived_visibility');
     expect(decision?.frontmatter.visibility_assignment_reason).toBe('single_input_inherits');
@@ -104,7 +104,7 @@ describe('company extraction', () => {
     expect(decision?.frontmatter.status).toBe('accepted');
     expect(decision?.frontmatter.policy_enforcement).toBe('deferred');
     expect(decision?.frontmatter.trusted_workspace_artifact).toBe(true);
-    expect(decision?.frontmatter.extraction_stage).toBe('stage-1d-local');
+    expect(decision?.frontmatter.extraction_kind).toBe(COMPANY_EXTRACTION_KIND);
     expect(decision?.compiled_truth).toContain('We agreed to keep launch scoped to citation refresh');
     expect(decision?.compiled_truth).toContain(`[[${ingest.evidence[0]?.slug}]]`);
     expect(decision?.source_kind).toBe(COMPANY_EXTRACTION_KIND);
@@ -122,7 +122,7 @@ describe('company extraction', () => {
 
     const action = await engine.getPage(result.actions[0]!.slug, { sourceId: 'company' });
     expect(action?.type).toBe('action');
-    expect(action?.frontmatter.object_policy_metadata_stage).toBe(COMPANY_OBJECT_POLICY_STAGE);
+    expect(action?.frontmatter.object_policy_metadata_kind).toBe(COMPANY_OBJECT_POLICY_KIND);
     expect(action?.frontmatter.owner).toBe('bob-example');
     expect(action?.frontmatter.status).toBe('open');
     expect(action?.frontmatter.source_meeting).toBe(ingest.meeting.slug);

@@ -7,7 +7,7 @@ import {
 } from '../src/core/company-policy.ts';
 import {
   buildCompanyPolicyResolverMetadata,
-  COMPANY_POLICY_EVALUATOR_STAGE,
+  COMPANY_POLICY_EVALUATOR_KIND,
   COMPANY_POLICY_NESTED_GROUP_BEHAVIOR,
   CompanyPolicyEvaluationError,
   evaluateCompanyPolicyForUser,
@@ -99,7 +99,7 @@ describe('company policy evaluator', () => {
     const metadata = buildCompanyPolicyMetadata(seed);
 
     const alice = evaluateCompanyPolicyForUser(storage, 'alice-example', metadata);
-    expect(alice.evaluator_stage).toBe(COMPANY_POLICY_EVALUATOR_STAGE);
+    expect(alice.evaluator_kind).toBe(COMPANY_POLICY_EVALUATOR_KIND);
     expect(alice.nested_group_behavior).toBe(COMPANY_POLICY_NESTED_GROUP_BEHAVIOR);
     expect(alice.group_ids).toEqual(['company-pilot-admins', 'engineering']);
     expect(alice.readable_policy_ids).toEqual(['company-trusted-workspace', 'engineering-notes']);
@@ -140,7 +140,7 @@ describe('company policy evaluator', () => {
     expect(evaluation.policy_hash).toMatch(/^[a-f0-9]{64}$/);
 
     const fallback = buildCompanyPolicyResolverMetadata(storage);
-    expect(fallback.policy_version).toMatch(/^stage-2b-storage-v1-[a-f0-9]{12}$/);
+    expect(fallback.policy_version).toMatch(/^company-policy-storage-v1-[a-f0-9]{12}$/);
     expect(fallback.policy_hash).toMatch(/^[a-f0-9]{64}$/);
 
     const changedSeed = parseCompanyPolicySeedYaml(`
@@ -169,7 +169,7 @@ audit:
 
   test('resolves derived visibility by inheritance, intersection, and rejection', () => {
     expect(resolveCompanyDerivedVisibility([['company-trusted-workspace']])).toEqual({
-      evaluator_stage: COMPANY_POLICY_EVALUATOR_STAGE,
+      evaluator_kind: COMPANY_POLICY_EVALUATOR_KIND,
       decision: 'inherit',
       reason: 'single_input_inherits',
       input_count: 1,
@@ -181,7 +181,7 @@ audit:
       ['engineering-notes', 'read-only-announcement'],
       ['engineering-notes', 'write-only-draft'],
     ])).toEqual({
-      evaluator_stage: COMPANY_POLICY_EVALUATOR_STAGE,
+      evaluator_kind: COMPANY_POLICY_EVALUATOR_KIND,
       decision: 'intersect',
       reason: 'multiple_inputs_intersect',
       input_count: 3,
@@ -192,7 +192,7 @@ audit:
       ['company-trusted-workspace'],
       ['engineering-notes'],
     ])).toEqual({
-      evaluator_stage: COMPANY_POLICY_EVALUATOR_STAGE,
+      evaluator_kind: COMPANY_POLICY_EVALUATOR_KIND,
       decision: 'reject',
       reason: 'empty_intersection',
       input_count: 2,
@@ -200,7 +200,7 @@ audit:
     });
 
     expect(resolveCompanyDerivedVisibility([])).toEqual({
-      evaluator_stage: COMPANY_POLICY_EVALUATOR_STAGE,
+      evaluator_kind: COMPANY_POLICY_EVALUATOR_KIND,
       decision: 'reject',
       reason: 'no_inputs',
       input_count: 0,

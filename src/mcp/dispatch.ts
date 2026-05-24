@@ -73,7 +73,7 @@ export interface DispatchOpts {
    */
   auth?: AuthInfo;
   /**
-   * Stage 2C company-brain context. If omitted, dispatch attempts a best-effort
+   * Company-brain request context. If omitted, dispatch attempts a best-effort
    * context build from company.policy.* config before invoking the handler.
    * This is representational only; operations are not policy-enforced here.
    */

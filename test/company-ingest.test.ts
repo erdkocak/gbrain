@@ -10,7 +10,7 @@ import { applyCompanyLayout, COMPANY_DEFAULT_POLICY_ID } from '../src/core/compa
 import { applyCompanyPolicySeed } from '../src/core/company-policy.ts';
 import {
   COMPANY_OBJECT_POLICY_ENFORCEMENT,
-  COMPANY_OBJECT_POLICY_STAGE,
+  COMPANY_OBJECT_POLICY_KIND,
 } from '../src/core/company-object-policy.ts';
 import {
   CompanyIngestError,
@@ -86,7 +86,7 @@ describe('company manual ingestion', () => {
     expect(meeting?.compiled_truth).toContain('Product sync transcript');
     expect(meeting?.frontmatter.visibility_policy_id).toBe(COMPANY_DEFAULT_POLICY_ID);
     expect(meeting?.frontmatter.visibility_policy_ids).toEqual([COMPANY_DEFAULT_POLICY_ID]);
-    expect(meeting?.frontmatter.object_policy_metadata_stage).toBe(COMPANY_OBJECT_POLICY_STAGE);
+    expect(meeting?.frontmatter.object_policy_metadata_kind).toBe(COMPANY_OBJECT_POLICY_KIND);
     expect(meeting?.frontmatter.object_policy_enforcement).toBe(COMPANY_OBJECT_POLICY_ENFORCEMENT);
     expect(meeting?.frontmatter.visibility_assignment).toBe('path_default');
     expect(meeting?.frontmatter.visibility_assignment_reason).toBe('policy_storage_path_default');
@@ -105,7 +105,7 @@ describe('company manual ingestion', () => {
     const linkedDoc = await engine.getPage('docs/search-refresh-prd', { sourceId: 'company' });
     expect(linkedDoc?.type).toBe('doc');
     expect(linkedDoc?.frontmatter.visibility_policy_id).toBe(COMPANY_DEFAULT_POLICY_ID);
-    expect(linkedDoc?.frontmatter.object_policy_metadata_stage).toBe(COMPANY_OBJECT_POLICY_STAGE);
+    expect(linkedDoc?.frontmatter.object_policy_metadata_kind).toBe(COMPANY_OBJECT_POLICY_KIND);
     expect(linkedDoc?.frontmatter.linked_meetings).toEqual(['meetings/2026-05-23-product-sync']);
     expect(linkedDoc?.frontmatter.evidence_refs).toEqual(['evidence/2026-05-23-doc-search-refresh-prd']);
     expect(linkedDoc?.compiled_truth).toContain('Search Refresh PRD');
@@ -115,7 +115,7 @@ describe('company manual ingestion', () => {
     const expectedHash = createHash('sha256').update(readFileSync(transcript)).digest('hex');
     expect(evidence?.type).toBe('evidence');
     expect(evidence?.frontmatter.visibility_policy_id).toBe(COMPANY_DEFAULT_POLICY_ID);
-    expect(evidence?.frontmatter.object_policy_metadata_stage).toBe(COMPANY_OBJECT_POLICY_STAGE);
+    expect(evidence?.frontmatter.object_policy_metadata_kind).toBe(COMPANY_OBJECT_POLICY_KIND);
     expect(evidence?.frontmatter.evidence_type).toBe('transcript');
     expect(evidence?.frontmatter.supports).toEqual(['meetings/2026-05-23-product-sync']);
     expect(evidence?.frontmatter.source_sha256).toBe(expectedHash);
@@ -170,7 +170,7 @@ describe('company manual ingestion', () => {
   test('rejects non-text extensions before writing pages', async () => {
     const pdfLike = writeFixture(
       'meeting.pdf',
-      '%PDF-1.7\nThis fixture is ASCII and NUL-free but still not a Stage 1C text input.',
+      '%PDF-1.7\nThis fixture is ASCII and NUL-free but still not a company text input.',
     );
 
     await expect(ingestCompanyMeeting(engine, {

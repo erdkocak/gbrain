@@ -45,7 +45,7 @@ export interface CompanyHostedSurfaceConfig {
   version: typeof COMPANY_HOSTED_SURFACE_VERSION;
   mode: 'trusted_pilot_clients_only';
   security_claim: 'none_trusted_workspace_only';
-  normal_secure_users: 'not_supported_until_stage_3_enforcement';
+  normal_secure_users: 'not_supported_until_permission_enforcement';
   direct_db_credentials: 'admin_development_only_not_for_normal_secure_users';
   mcp_surface: {
     clients: 'trusted_company_workspace_pilot_clients_only';
@@ -67,7 +67,7 @@ export function buildCompanyHostedSurfaceConfig(): CompanyHostedSurfaceConfig {
     version: COMPANY_HOSTED_SURFACE_VERSION,
     mode: 'trusted_pilot_clients_only',
     security_claim: 'none_trusted_workspace_only',
-    normal_secure_users: 'not_supported_until_stage_3_enforcement',
+    normal_secure_users: 'not_supported_until_permission_enforcement',
     direct_db_credentials: 'admin_development_only_not_for_normal_secure_users',
     mcp_surface: {
       clients: 'trusted_company_workspace_pilot_clients_only',

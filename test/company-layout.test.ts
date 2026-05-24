@@ -11,7 +11,7 @@ import { loadActivePack } from '../src/core/schema-pack/load-active.ts';
 import { inferTypeFromPack } from '../src/core/markdown.ts';
 
 describe('company layout defaults', () => {
-  test('declares the Stage 1B company object paths and templates', () => {
+  test('declares the company object paths and templates', () => {
     const layout = buildCompanyLayoutConfig();
 
     expect(layout.version).toBe(1);

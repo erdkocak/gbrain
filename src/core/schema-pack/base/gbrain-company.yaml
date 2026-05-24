@@ -1,6 +1,6 @@
 # gbrain-company - trusted workspace company brain pack.
 #
-# Stage 1 company mode is a useful single-workspace pilot only. This pack
+# Company mode is a useful single-workspace pilot only. This pack
 # describes default company memory shape for filing and type inference; it
 # does not add ACLs, RLS, object-policy enforcement, or secure multi-user
 # behavior.

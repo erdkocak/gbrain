@@ -29,9 +29,9 @@ import {
 } from './company-object-policy.ts';
 import type { AuthInfo } from './operations.ts';
 
-export const COMPANY_POLICY_INSPECTION_STAGE = 'stage_2e_policy_inspection_not_enforced';
+export const COMPANY_POLICY_INSPECTION_KIND = 'company_policy_inspection';
 export const COMPANY_POLICY_INSPECTION_GUARDRAIL =
-  'Policies are represented and resolvable, but not fully enforced until Stage 3.';
+  'Policies are represented and resolvable, but not yet fully enforced.';
 
 export class CompanyPolicyInspectError extends Error {
   constructor(
@@ -68,13 +68,13 @@ export interface CompanyPolicyInspectionSurfaceSummary {
   hosted_skill_default: CompanyHostedSurfaceConfig['skill_gate']['default'];
   hosted_skill_exposure: CompanyHostedSurfaceConfig['skill_gate']['exposure'];
   disabled_surfaces: CompanyHostedSurfaceConfig['disabled_surfaces'];
-  object_policy_stage: CompanyObjectPolicyConfig['stage'];
+  object_policy_kind: CompanyObjectPolicyConfig['kind'];
   object_policy_enforcement: CompanyObjectPolicyConfig['enforcement'];
 }
 
 export interface CompanyPolicySeedInspection {
   schema_version: 1;
-  stage: typeof COMPANY_POLICY_INSPECTION_STAGE;
+  kind: typeof COMPANY_POLICY_INSPECTION_KIND;
   guardrail: typeof COMPANY_POLICY_INSPECTION_GUARDRAIL;
   source_id: string;
   trusted_workspace: true;
@@ -88,7 +88,7 @@ export interface CompanyPolicySeedInspection {
 
 export interface CompanyPolicyGrantInspection {
   schema_version: 1;
-  stage: typeof COMPANY_POLICY_INSPECTION_STAGE;
+  kind: typeof COMPANY_POLICY_INSPECTION_KIND;
   guardrail: typeof COMPANY_POLICY_INSPECTION_GUARDRAIL;
   source_id: string;
   trusted_workspace: true;
@@ -110,7 +110,7 @@ export interface CompanyRequestContextPreviewInput {
 
 export interface CompanyRequestContextPreview {
   schema_version: 1;
-  stage: typeof COMPANY_POLICY_INSPECTION_STAGE;
+  kind: typeof COMPANY_POLICY_INSPECTION_KIND;
   guardrail: typeof COMPANY_POLICY_INSPECTION_GUARDRAIL;
   source_id: string;
   trusted_workspace: true;
@@ -135,7 +135,7 @@ export async function inspectCompanyPolicySeed(
   const workspace = await loadCompanyPolicyInspectionWorkspace(engine, input.sourceId);
   return {
     schema_version: 1,
-    stage: COMPANY_POLICY_INSPECTION_STAGE,
+    kind: COMPANY_POLICY_INSPECTION_KIND,
     guardrail: COMPANY_POLICY_INSPECTION_GUARDRAIL,
     source_id: workspace.sourceId,
     trusted_workspace: true,
@@ -160,7 +160,7 @@ export async function inspectCompanyPolicyGrants(
   const evaluation = evaluateCompanyPolicyForUser(workspace.storage, userId, workspace.metadata);
   return {
     schema_version: 1,
-    stage: COMPANY_POLICY_INSPECTION_STAGE,
+    kind: COMPANY_POLICY_INSPECTION_KIND,
     guardrail: COMPANY_POLICY_INSPECTION_GUARDRAIL,
     source_id: workspace.sourceId,
     trusted_workspace: true,
@@ -200,7 +200,7 @@ export async function previewCompanyPolicyRequestContext(
 
   return {
     schema_version: 1,
-    stage: COMPANY_POLICY_INSPECTION_STAGE,
+    kind: COMPANY_POLICY_INSPECTION_KIND,
     guardrail: COMPANY_POLICY_INSPECTION_GUARDRAIL,
     source_id: workspace.sourceId,
     trusted_workspace: true,
@@ -241,7 +241,7 @@ async function loadCompanyPolicyInspectionWorkspace(
   if (!snapshot) {
     throw new CompanyPolicyInspectError(
       'policy_missing',
-      'Company policy storage is missing. Re-run `gbrain init --company` to seed Stage 2 policy representation.',
+      'Company policy storage is missing. Re-run `gbrain init --company` to seed policy representation.',
     );
   }
 
@@ -300,7 +300,7 @@ function summarizeInspectionSurface(
     hosted_skill_default: hostedSurface.skill_gate.default,
     hosted_skill_exposure: hostedSurface.skill_gate.exposure,
     disabled_surfaces: hostedSurface.disabled_surfaces,
-    object_policy_stage: objectPolicy.stage,
+    object_policy_kind: objectPolicy.kind,
     object_policy_enforcement: objectPolicy.enforcement,
   };
 }

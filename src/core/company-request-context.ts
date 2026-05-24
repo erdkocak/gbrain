@@ -6,13 +6,13 @@ import {
   type CompanyPolicyStorage,
 } from './company-policy.ts';
 import {
-  COMPANY_POLICY_EVALUATOR_STAGE,
+  COMPANY_POLICY_EVALUATOR_KIND,
   evaluateCompanyPolicyForUser,
   type CompanyPolicyUserEvaluation,
 } from './company-policy-evaluator.ts';
 
-export const COMPANY_REQUEST_CONTEXT_STAGE = 'stage_2c_context_not_enforced';
-export const COMPANY_REQUEST_CONTEXT_ENFORCEMENT = 'not_enforced_stage_2c';
+export const COMPANY_REQUEST_CONTEXT_KIND = 'company_request_context';
+export const COMPANY_REQUEST_CONTEXT_ENFORCEMENT = 'represented_not_enforced';
 
 export type CompanyRequestTransport =
   | 'local_cli'
@@ -54,9 +54,9 @@ export interface CompanyIdentityResolution {
 
 export interface CompanyRequestContext {
   schema_version: 1;
-  stage: typeof COMPANY_REQUEST_CONTEXT_STAGE;
+  kind: typeof COMPANY_REQUEST_CONTEXT_KIND;
   enforcement: typeof COMPANY_REQUEST_CONTEXT_ENFORCEMENT;
-  evaluator_stage: typeof COMPANY_POLICY_EVALUATOR_STAGE;
+  evaluator_kind: typeof COMPANY_POLICY_EVALUATOR_KIND;
   requestId: string;
   brainId: string;
   sourceId: string;
@@ -355,9 +355,9 @@ function finalizeCompanyRequestContext(args: {
 
   return {
     schema_version: 1,
-    stage: COMPANY_REQUEST_CONTEXT_STAGE,
+    kind: COMPANY_REQUEST_CONTEXT_KIND,
     enforcement: COMPANY_REQUEST_CONTEXT_ENFORCEMENT,
-    evaluator_stage: COMPANY_POLICY_EVALUATOR_STAGE,
+    evaluator_kind: COMPANY_POLICY_EVALUATOR_KIND,
     requestId,
     brainId,
     sourceId,

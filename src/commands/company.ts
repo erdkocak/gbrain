@@ -42,6 +42,10 @@ import {
   type CompanyRequestContextPreview,
   type CompanyRequestContextPreviewInput,
 } from '../core/company-policy-inspect.ts';
+import {
+  buildCompanyEnforcementHandoff,
+  type CompanyEnforcementHandoff,
+} from '../core/company-enforcement-handoff.ts';
 import { isAvailable } from '../core/ai/gateway.ts';
 
 const HELP = `Usage:
@@ -56,16 +60,19 @@ const HELP = `Usage:
   gbrain company policy seed [options]
   gbrain company policy grants <user-id> [options]
   gbrain company policy context [identity options]
+  gbrain company enforcement-handoff [options]
 
-Stage 1C-1F local/manual company memory for a trusted workspace pilot.
+Local/manual company memory for a trusted workspace pilot.
 Ingest writes meeting, doc, and evidence pages with file provenance. Extract
 derives decisions, commitments, and follow-up action candidates from trusted
 meeting/doc pages. Query answers from company layout pages with citations to
 meetings, docs, and evidence. Follow-up drafting produces local drafts only;
 it does not send email, post messages, create tickets, run webhooks, invoke
 subagents, or execute external actions. Hosted skill exposure is deny-by-
-default for trusted pilot clients only. Stage 2 policies are represented and
-resolvable for local/admin inspection, but not fully enforced until Stage 3.
+default for trusted pilot clients only. Company policies are represented and
+resolvable for local/admin inspection, but not yet fully enforced.
+The enforcement handoff command prints permission-enforcement hook order and residual risks;
+it is a plan, not an authorization gate.
 These commands do not start live integrations, cron, webhooks, background
 connectors, hosted write access, query cache, hot-memory, code-intelligence
 reads, analytics reads, or dream-cycle outputs.
@@ -136,12 +143,17 @@ type Parsed =
   | ({ kind: 'policy-seed'; sourceId: string | undefined; json: boolean })
   | ({ kind: 'policy-grants'; userId: string; sourceId: string | undefined; json: boolean })
   | ({ kind: 'policy-context'; input: CompanyRequestContextPreviewInput; json: boolean })
+  | ({ kind: 'enforcement-handoff'; json: boolean })
   | { help: true };
 
 export async function runCompany(engine: BrainEngine | null, args: string[]): Promise<void> {
   const parsed = parseArgs(args);
   if ('help' in parsed) {
     console.log(HELP);
+    return;
+  }
+  if (parsed.kind === 'enforcement-handoff') {
+    printEnforcementHandoff(buildCompanyEnforcementHandoff(), parsed.json);
     return;
   }
   if (!engine) {
@@ -232,9 +244,23 @@ function parseArgs(args: string[]): Parsed {
   if (group === 'policy' || group === 'policies') {
     return parsePolicy([subcommand, ...rest].filter((v): v is string => typeof v === 'string'));
   }
+  if (
+    group === 'enforcement-handoff'
+    || group === 'handoff'
+  ) {
+    const handoffArgs = [subcommand, ...rest].filter((v): v is string => typeof v === 'string');
+    let json = false;
+    for (const arg of handoffArgs) {
+      if (arg === '--json') { json = true; continue; }
+      if (arg.startsWith('--')) unknownFlag(arg);
+      console.error('Usage: gbrain company enforcement-handoff [--json]');
+      process.exit(2);
+    }
+    return { kind: 'enforcement-handoff', json };
+  }
 
   if (group !== 'ingest' || (subcommand !== 'meeting' && subcommand !== 'doc')) {
-    console.error('Usage: gbrain company <ingest|extract|query|decisions|follow-up|hosted-surface|policy> ...');
+    console.error('Usage: gbrain company <ingest|extract|query|decisions|follow-up|hosted-surface|policy|enforcement-handoff> ...');
     console.error('Run `gbrain company --help` for details.');
     process.exit(2);
   }
@@ -742,7 +768,7 @@ function printHostedSurfaceResult(result: CompanyHostedSurfaceConfig, json: bool
   for (const surface of result.disabled_surfaces) {
     console.log(`    - ${surface}`);
   }
-  console.log('  note: trusted pilot clients only; normal secure users still need Stage 3 policy enforcement');
+  console.log('  note: trusted pilot clients only; normal secure users still need permission enforcement');
 }
 
 function printPolicySeedInspection(result: CompanyPolicySeedInspection, json: boolean): void {
@@ -761,7 +787,7 @@ function printPolicySeedInspection(result: CompanyPolicySeedInspection, json: bo
   console.log(`  grants:          ${result.policy_storage.grants}`);
   console.log(`  path defaults:   ${result.policy_storage.path_defaults}`);
   console.log(`  hosted skills:   ${result.surface_summary.hosted_skill_default} by default`);
-  console.log(`  object policy:   ${result.surface_summary.object_policy_stage}`);
+  console.log(`  object policy:   ${result.surface_summary.object_policy_kind}`);
   console.log(`  guardrail:       ${result.guardrail}`);
 }
 
@@ -800,6 +826,33 @@ function printPolicyContextPreview(result: CompanyRequestContextPreview, json: b
   console.log(`  policy id:     ${ctx.policyDecisionId}`);
   console.log(`  enforcement:   ${ctx.enforcement}`);
   console.log(`  guardrail:     ${result.guardrail}`);
+}
+
+function printEnforcementHandoff(result: CompanyEnforcementHandoff, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log('company enforcement handoff:');
+  console.log(`  kind:       ${result.kind}`);
+  console.log(`  guardrail:  ${result.guardrail}`);
+  console.log(`  cache:      ${result.cache_strategy.decision}`);
+  console.log('');
+  console.log('First hooks:');
+  for (const hook of result.first_hooks) {
+    const blocker = hook.blocks_secure_claim_until_done ? 'blocks secure claim' : 'audit follow-up';
+    console.log(`  - ${hook.priority} ${hook.id}: ${hook.surface} (${blocker})`);
+  }
+  console.log('');
+  console.log('Derived-memory surfaces:');
+  for (const item of result.derived_memory_plan) {
+    console.log(`  - ${item.surface}: ${item.residual_owner}`);
+  }
+  console.log('');
+  console.log('Residual risks:');
+  for (const risk of result.residual_risks) {
+    console.log(`  - ${risk.id}: ${risk.owner}`);
+  }
 }
 
 function formatList(values: readonly string[]): string {

@@ -333,7 +333,7 @@ function readSourceFile(path: string, label: string): SourceFile {
   if (nul !== -1) {
     throw new CompanyIngestError(
       'file_binary',
-      `${label} appears to be binary (null byte at offset ${nul}); Stage 1C accepts local text files only.`,
+      `${label} appears to be binary (null byte at offset ${nul}); company ingest accepts local text files only.`,
     );
   }
   const content = buf.toString('utf8');
@@ -424,12 +424,12 @@ function buildMeetingMarkdown(input: {
     source_sha256: input.transcript.sha256,
     source_bytes: input.transcript.byteLength,
     captured_at: input.capturedAt,
-    ingestion_stage: 'stage-1c-manual',
+    ingestion_kind: COMPANY_MANUAL_INGEST_KIND,
   };
   const body = [
     '## Summary',
     '',
-    'Manual trusted-workspace meeting transcript ingestion. Extraction of decisions, commitments, owners, and follow-up actions is deferred to Stage 1D.',
+    'Manual trusted-workspace meeting transcript ingestion. Extraction of decisions, commitments, owners, and follow-up actions is a separate local step.',
     '',
     '## Linked Docs',
     '',
@@ -471,12 +471,12 @@ function buildDocMarkdown(input: {
     projects: input.projects,
     linked_meetings: input.linkedMeetingSlug ? [input.linkedMeetingSlug] : [],
     captured_at: input.capturedAt,
-    ingestion_stage: 'stage-1c-manual',
+    ingestion_kind: COMPANY_MANUAL_INGEST_KIND,
   };
   const body = [
     '## Summary',
     '',
-    'Manual trusted-workspace linked document ingestion. Extraction and citation synthesis are deferred to later Stage 1 steps.',
+    'Manual trusted-workspace linked document ingestion. Extraction and citation synthesis are separate local steps.',
     '',
     '## Linked Meetings',
     '',
@@ -515,7 +515,7 @@ function buildEvidenceMarkdown(input: {
     source_bytes: input.sourceFile.byteLength,
     captured_at: input.capturedAt,
     supports: input.supports,
-    ingestion_stage: 'stage-1c-manual',
+    ingestion_kind: COMPANY_MANUAL_INGEST_KIND,
   };
   const body = [
     '## Evidence',

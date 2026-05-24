@@ -10,7 +10,7 @@ import { COMPANY_PRIMARY_SOURCE_ID } from './company-mode.ts';
 
 export const COMPANY_POLICY_SCHEMA_VERSION = 1;
 export const COMPANY_POLICY_STORAGE_KIND = 'company-policy-seed';
-export const COMPANY_POLICY_ENFORCEMENT_STAGE = 'not_enforced_stage_2a';
+export const COMPANY_POLICY_ENFORCEMENT_STATUS = 'represented_not_enforced';
 export const COMPANY_POLICY_DEFAULT_DECISION = 'deny';
 
 export type CompanyPolicyPermission = 'read' | 'write';
@@ -91,7 +91,7 @@ export interface CompanyPolicyGroupMembership {
 export interface CompanyPolicyStorage {
   schema_version: typeof COMPANY_POLICY_SCHEMA_VERSION;
   kind: typeof COMPANY_POLICY_STORAGE_KIND;
-  enforcement: typeof COMPANY_POLICY_ENFORCEMENT_STAGE;
+  enforcement: typeof COMPANY_POLICY_ENFORCEMENT_STATUS;
   default_decision: typeof COMPANY_POLICY_DEFAULT_DECISION;
   default_policy_id: typeof COMPANY_DEFAULT_POLICY_ID;
   users: Record<string, CompanyPolicySeedUser>;
@@ -109,7 +109,7 @@ export interface CompanyPolicyMetadata {
   kind: typeof COMPANY_POLICY_STORAGE_KIND;
   policy_version: string;
   policy_hash: string;
-  enforcement: typeof COMPANY_POLICY_ENFORCEMENT_STAGE;
+  enforcement: typeof COMPANY_POLICY_ENFORCEMENT_STATUS;
   default_decision: typeof COMPANY_POLICY_DEFAULT_DECISION;
   default_policy_id: typeof COMPANY_DEFAULT_POLICY_ID;
 }
@@ -141,7 +141,7 @@ export function buildDefaultCompanyPolicySeed(): CompanyPolicySeed {
     policies: [{
       id: COMPANY_DEFAULT_POLICY_ID,
       label: 'Company trusted workspace default',
-      description: 'Stage 2A representational policy for Stage 1 trusted company workspace artifacts.',
+      description: 'Representational policy for trusted company workspace artifacts.',
       read: { users: [], groups: ['company-pilot-admins'] },
       write: { users: [], groups: ['company-pilot-admins'] },
     }],
@@ -214,7 +214,7 @@ export function normalizeCompanyPolicySeed(raw: unknown): CompanyPolicySeed {
   const audit = normalizeAudit(optionalRecord(root.audit, 'audit', issues), userIds, groupIds, issues);
 
   if (!policyIds.has(COMPANY_DEFAULT_POLICY_ID)) {
-    issues.push(`policies must include Stage 1 default policy "${COMPANY_DEFAULT_POLICY_ID}"`);
+    issues.push(`policies must include trusted workspace default policy "${COMPANY_DEFAULT_POLICY_ID}"`);
   }
 
   if (issues.length > 0) {
@@ -249,7 +249,7 @@ export function buildCompanyPolicyStorage(seed: CompanyPolicySeed): CompanyPolic
   return {
     schema_version: COMPANY_POLICY_SCHEMA_VERSION,
     kind: COMPANY_POLICY_STORAGE_KIND,
-    enforcement: COMPANY_POLICY_ENFORCEMENT_STAGE,
+    enforcement: COMPANY_POLICY_ENFORCEMENT_STATUS,
     default_decision: COMPANY_POLICY_DEFAULT_DECISION,
     default_policy_id: COMPANY_DEFAULT_POLICY_ID,
     users: Object.fromEntries(seed.users.map((user) => [user.id, user])),
@@ -275,9 +275,9 @@ export function buildCompanyPolicyMetadata(seed: CompanyPolicySeed): CompanyPoli
   return {
     schema_version: COMPANY_POLICY_SCHEMA_VERSION,
     kind: COMPANY_POLICY_STORAGE_KIND,
-    policy_version: `stage-2a-v${seed.version}-${policyHash.slice(0, 12)}`,
+    policy_version: `company-policy-v${seed.version}-${policyHash.slice(0, 12)}`,
     policy_hash: policyHash,
-    enforcement: COMPANY_POLICY_ENFORCEMENT_STAGE,
+    enforcement: COMPANY_POLICY_ENFORCEMENT_STATUS,
     default_decision: COMPANY_POLICY_DEFAULT_DECISION,
     default_policy_id: COMPANY_DEFAULT_POLICY_ID,
   };
@@ -332,7 +332,7 @@ function normalizeUser(raw: Record<string, unknown>, path: string, issues: strin
 
 function normalizeGroup(raw: Record<string, unknown>, path: string, issues: string[]): CompanyPolicySeedGroup {
   if (raw.groups !== undefined) {
-    issues.push(`${path}.groups nested groups are deferred to Stage 2B and are not accepted in Stage 2A`);
+    issues.push(`${path}.groups nested groups are not accepted in company policy storage`);
   }
   return {
     id: requiredId(raw.id, `${path}.id`, issues),

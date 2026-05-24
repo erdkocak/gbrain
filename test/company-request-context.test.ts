@@ -11,7 +11,7 @@ import {
   buildCompanyRequestContext,
   buildCompanyRequestContextFromOperationContext,
   COMPANY_REQUEST_CONTEXT_ENFORCEMENT,
-  COMPANY_REQUEST_CONTEXT_STAGE,
+  COMPANY_REQUEST_CONTEXT_KIND,
   loadCompanyPolicyConfigSnapshot,
   resolveCompanyIdentity,
 } from '../src/core/company-request-context.ts';
@@ -182,7 +182,7 @@ describe('company request context', () => {
     };
 
     const ctx = buildCompanyRequestContext({
-      requestId: 'req-stage-2c',
+      requestId: 'req-company-context',
       brainId: 'host',
       sourceId: 'company',
       allowedSources: auth.allowedSources,
@@ -195,7 +195,7 @@ describe('company request context', () => {
       legacyTakesHoldersAllowList: ['world'],
     });
 
-    expect(ctx.stage).toBe(COMPANY_REQUEST_CONTEXT_STAGE);
+    expect(ctx.kind).toBe(COMPANY_REQUEST_CONTEXT_KIND);
     expect(ctx.enforcement).toBe(COMPANY_REQUEST_CONTEXT_ENFORCEMENT);
     expect(ctx.transport).toBe('hosted_mcp_oauth');
     expect(ctx.userId).toBe('bob-example');
@@ -233,7 +233,7 @@ describe('company request context', () => {
     expect(local.identityStatus).toBe('trusted_local');
     expect(local.userId).toBeNull();
     expect(local.remote).toBe(false);
-    expect(local.enforcement).toBe('not_enforced_stage_2c');
+    expect(local.enforcement).toBe(COMPANY_REQUEST_CONTEXT_ENFORCEMENT);
     expect(local.readablePolicyIds).toEqual([]);
 
     const stdio = buildCompanyRequestContext({
@@ -335,6 +335,6 @@ describe('company request context', () => {
     expect(ctx.policyContextError).toBeTruthy();
     expect(ctx.readablePolicyIds).toEqual([]);
     expect(ctx.writablePolicyIds).toEqual([]);
-    expect(ctx.enforcement).toBe('not_enforced_stage_2c');
+    expect(ctx.enforcement).toBe(COMPANY_REQUEST_CONTEXT_ENFORCEMENT);
   });
 });

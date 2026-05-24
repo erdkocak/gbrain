@@ -479,7 +479,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'company.policy.default_decision',
   'company.policy.enforcement',
   'company.object_policy',
-  'company.object_policy.stage',
+  'company.object_policy.kind',
   'company.object_policy.enforcement',
   'company.object_policy.path_defaults',
   'company.object_policy.related_storage_plan',
