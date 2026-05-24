@@ -12,6 +12,7 @@ import type { Operation, OperationContext, AuthInfo } from '../core/operations.t
 import { loadConfig } from '../core/config.ts';
 import { buildCompanyRequestContextFromOperationContext } from '../core/company-request-context.ts';
 import type { CompanyIdentityInput, CompanyRequestContext } from '../core/company-request-context.ts';
+import { enforceHostedCompanyRequestGate } from '../core/company-request-gate.ts';
 
 export interface ToolResult {
   content: { type: 'text'; text: string }[];
@@ -271,6 +272,7 @@ export async function dispatchToolCall(
   }
 
   try {
+    await enforceHostedCompanyRequestGate(ctx, safeParams);
     const result = await op.handler(ctx, safeParams);
     const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.

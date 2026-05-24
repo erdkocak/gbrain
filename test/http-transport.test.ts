@@ -305,6 +305,23 @@ describe('http-transport: tools/call dispatch', () => {
     // — both prove dispatch reached the handler with the correct shape.
   });
 
+  test('7b. tools/call threads legacy bearer auth into dispatch', async () => {
+    const r = await fetch(`${srv.url}/mcp`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TOK}`, 'Content-Type': 'application/json' },
+      body: rpc('tools/call', { name: 'whoami', arguments: {} }),
+    });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    expect(body.result.isError).toBeUndefined();
+    expect(JSON.parse(body.result.content[0].text)).toEqual({
+      transport: 'legacy',
+      token_name: 'fix',
+      scopes: ['read', 'write', 'admin'],
+      expires_at: null,
+    });
+  });
+
   test('8. tools/call with malformed params → 200 wrapping an isError result (F3 guard via dispatch.ts)', async () => {
     const r = await fetch(`${srv.url}/mcp`, {
       method: 'POST',

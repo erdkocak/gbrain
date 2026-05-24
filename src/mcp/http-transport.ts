@@ -28,7 +28,7 @@
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
-import { operations } from '../core/operations.ts';
+import { operations, type AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { dispatchToolCall } from './dispatch.ts';
 import { buildDefaultLimiters, type RateLimiter } from './rate-limit.ts';
@@ -340,14 +340,25 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       if (method === 'tools/call') {
         const toolName: string = params?.name ?? 'unknown';
         const args: Record<string, unknown> = params?.arguments ?? {};
+        const legacyAuth: AuthInfo = {
+          token: 'legacy-bearer',
+          clientId: auth.tokenName!,
+          clientName: auth.tokenName!,
+          scopes: ['read', 'write', 'admin'],
+          sourceId: auth.sourceId,
+          allowedSources: auth.sourceId ? [auth.sourceId] : undefined,
+        };
         // v0.28: thread per-token takes-holder allow-list so takes_list /
         // takes_search / query (when it returns takes) can server-side filter.
         // v0.34.1 (#861): thread source-isolation scope. Legacy access_tokens
         // path defaults to 'default' per AuthResult.sourceId above.
+        // Company-request gates also require ctx.auth for every hosted remote
+        // path, including this older bearer-token transport.
         const result = await dispatchToolCall(engine, toolName, args, {
           remote: true,
           takesHoldersAllowList: auth.takesHoldersAllowList,
           sourceId: auth.sourceId,
+          auth: legacyAuth,
         });
         const status = result.isError ? 'error' : 'success';
         logRequest(auth.tokenName!, `tools/call:${toolName}`, status, Date.now() - startedMs);
