@@ -163,6 +163,25 @@ describe('hosted company request gate', () => {
     expect(parseToolJson(malformed).error).toBe('permission_denied');
   });
 
+  test('rejects stale policy metadata for hosted company requests', async () => {
+    await initCompanyBrain();
+    const metadataRaw = await engine.getConfig('company.policy.metadata');
+    const metadata = JSON.parse(metadataRaw!);
+    metadata.policy_hash = '0'.repeat(64);
+    await engine.setConfig('company.policy.metadata', JSON.stringify(metadata));
+
+    const stale = await dispatchToolCall(engine, 'whoami', {}, {
+      remote: true,
+      sourceId: 'company',
+      auth: hostedAuth(),
+    });
+    expect(stale.isError).toBe(true);
+    expect(parseToolJson(stale)).toMatchObject({
+      error: 'permission_denied',
+      message: 'Company policy context is required for hosted company requests.',
+    });
+  });
+
   test('allows source overrides only when they narrow to an allowed existing source', async () => {
     await initCompanyBrain();
     await engine.executeRaw(

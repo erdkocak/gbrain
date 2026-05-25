@@ -213,7 +213,7 @@ function printCliOnlyHelp(command: string) {
     console.log('Usage: gbrain init [--company] [--pglite|--supabase|--url <connection_string>]');
     console.log('');
     console.log('Options:');
-    console.log('  --company        Trusted workspace company-brain pilot; no ACL, RLS, or secure multi-user claim');
+    console.log('  --company        Trusted workspace company brain; reviewed hosted MCP permissions, no DB ACL/RLS claim');
     console.log('  --mcp-only       Configure a thin client only; cannot be combined with --company');
     console.log('  --no-embedding   Defer embedding setup');
     return;
@@ -724,7 +724,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   dream: 'dream runs the autopilot cycle on the host. `gbrain remote ping` queues one. (Native `gbrain dream` thin-client routing planned for v0.31.2.)',
   orphans: "orphans needs the host's brain. Run on the host or use the `find_orphans` MCP tool from your agent.",
   transcripts: 'transcripts is server-private (raw chat exports stay on the host). Read transcripts on the host machine.',
-  company: 'company ingestion/extraction/retrieval/follow-up drafting, policy inspection, and enforcement handoff are local/manual for the trusted-workspace pilot. Run it on the host; hosted writes and external execution stay disabled, and policy is not yet fully enforced.',
+  company: 'company ingestion/extraction/retrieval/follow-up drafting, policy inspection, and permission status. Run local/admin workflows on the host; reviewed hosted MCP operations enforce application-layer permissions, while broad hosted writes and external execution stay disabled.',
   storage: 'storage operates on the local repo on disk. Run on the host.',
   takes: 'takes mutate subcommands edit local .md files; routing the read subcommands lands in v0.31.x. For now: use `takes_list` and `takes_search` MCP tools from your agent, or run on the host.',
   sources: 'sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.',
@@ -1116,7 +1116,7 @@ async function handleCliOnly(command: string, args: string[]) {
   }
   if (
     command === 'company'
-    && ['enforcement-handoff', 'handoff'].includes(args[0] ?? '')
+    && ['enforcement-handoff', 'handoff', 'permission-status', 'permission'].includes(args[0] ?? '')
   ) {
     const { runCompany } = await import('./commands/company.ts');
     await runCompany(null, args);
@@ -1679,8 +1679,9 @@ IMPORT/EXPORT
   company query <question>           Local company retrieval with citations
   company follow-up draft            Draft-only follow-up; no sending
   company hosted-surface             Deny-by-default trusted pilot skill surface
-  company policy seed|grants|context Local/admin policy inspection; not fully enforced
-  company enforcement-handoff        Permission-enforcement hook plan; not enforcement
+  company policy seed|grants|context Local/admin policy inspection
+  company enforcement-handoff        Permission-enforcement hook plan
+  company permission-status          Reviewed hosted MCP permission status
   sync [--repo <path>] [flags]       Git-to-brain incremental sync
   sync --watch [--interval N]        Continuous sync (loops until stopped)
   sync --install-cron                Install persistent sync daemon

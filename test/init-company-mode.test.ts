@@ -51,7 +51,9 @@ describe('gbrain init --company', () => {
       expect(parsed.company.mode).toBe('trusted_workspace');
       expect(parsed.company.policy_enforcement).toBe('deferred');
       expect(parsed.company.hosted_skill_exposure).toBe('deny_by_default_trusted_pilot');
-      expect(parsed.company.hosted_surface.mode).toBe('trusted_pilot_clients_only');
+      expect(parsed.company.hosted_surface.mode).toBe('reviewed_hosted_mcp_operations_only');
+      expect(parsed.company.hosted_surface.security_claim).toBe('app_layer_permissions_reviewed_tools_only');
+      expect(parsed.company.hosted_surface.mcp_surface.policy_enforcement).toBe('application_layer_reviewed_operations');
       expect(parsed.company.hosted_surface.skill_gate.default).toBe('deny');
       expect(parsed.company.hosted_surface.skill_gate.allowlist.map((entry: any) => entry.name)).toEqual([
         'query',
@@ -135,7 +137,8 @@ describe('gbrain init --company', () => {
       const companyHelp = await runCli(['company', '--help'], home);
       expect(companyHelp.exitCode).toBe(0);
       expect(companyHelp.stdout).toContain('gbrain company policy seed');
-      expect(companyHelp.stdout).toContain('not yet fully enforced');
+      expect(companyHelp.stdout).toContain('application-layer permissions');
+      expect(companyHelp.stdout).toContain('gbrain company permission-status');
 
       const policySeedInspect = await runCli(['company', 'policy', 'seed', '--json'], home);
       expect(policySeedInspect.exitCode).toBe(0);
@@ -146,7 +149,7 @@ describe('gbrain init --company', () => {
       expect(policySeedParsed.policy_storage.enforcement).toBe('represented_not_enforced');
       expect(policySeedParsed.surface_summary.hosted_skill_default).toBe('deny');
       expect(policySeedParsed.hosted_surface.disabled_surfaces).toContain('direct_db_credentials_for_normal_secure_users');
-      expect(policySeedParsed.hosted_surface.disabled_surfaces).toContain('hosted_writes_for_normal_users');
+      expect(policySeedParsed.hosted_surface.disabled_surfaces).toContain('broad_hosted_writes_for_normal_users');
 
       const policyGrants = await runCli(['company', 'policy', 'grants', 'company-pilot-user', '--json'], home);
       expect(policyGrants.exitCode).toBe(0);

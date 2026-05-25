@@ -1,6 +1,10 @@
 # Company Enforcement Handoff
 
-Company policy is now representable, resolvable, inspectable, and attached to company-mode objects. It is not yet fully enforced. Secure multi-user claims must wait until the permission-enforcement hooks below are implemented and tested.
+Company policy is representable, resolvable, inspectable, attached to company-mode
+objects, and enforced on the reviewed hosted MCP operation path. This handoff
+records the enforcement design and the remaining boundaries that are still not
+claimed. For current product wording, residual risks, and audit-hardening fields,
+see `docs/architecture/company-permission-status.md`.
 
 Use `gbrain company enforcement-handoff --json` for the machine-readable version of this handoff.
 
@@ -39,7 +43,7 @@ Decisions and commitments inherit visibility from one input, intersect visibilit
 
 ## First Hooks
 
-Permission enforcement should implement hooks in this order:
+The reviewed hosted operation path uses these hooks in this order:
 
 1. Require resolved company request context for secure hosted company operations.
 2. Add direct read filters for pages, chunks, files, facts, takes, salience, anomalies, contradictions, and trajectory.

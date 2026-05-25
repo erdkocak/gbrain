@@ -263,9 +263,17 @@ export async function loadCompanyPolicyConfigSnapshot(engine: BrainEngine): Prom
   let metadata: CompanyPolicyMetadata | undefined;
   try {
     const metadataRaw = await engine.getConfig('company.policy.metadata');
-    if (metadataRaw) metadata = JSON.parse(metadataRaw) as CompanyPolicyMetadata;
+    if (metadataRaw) {
+      metadata = JSON.parse(metadataRaw) as CompanyPolicyMetadata;
+      const [policyHash, policyVersion] = await Promise.all([
+        engine.getConfig('company.policy.hash').catch(() => null),
+        engine.getConfig('company.policy.version').catch(() => null),
+      ]);
+      if (policyHash && metadata.policy_hash !== policyHash) return null;
+      if (policyVersion && metadata.policy_version !== policyVersion) return null;
+    }
   } catch {
-    metadata = undefined;
+    return null;
   }
 
   let trustedWorkspace = false;

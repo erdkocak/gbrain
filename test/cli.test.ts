@@ -221,7 +221,8 @@ describe('CLI dispatch integration', () => {
       expect(stdout).toContain('gbrain company hosted-surface');
       expect(stdout).toContain('gbrain company policy seed');
       expect(stdout).toContain('gbrain company enforcement-handoff');
-      expect(stdout).toContain('not yet fully enforced');
+      expect(stdout).toContain('gbrain company permission-status');
+      expect(stdout).toContain('application-layer permissions');
       expect(stdout).toContain('trusted workspace pilot');
       expect(stdout).toContain('do not start live integrations');
       expect(stdout).toContain('does not send email');
@@ -253,6 +254,32 @@ describe('CLI dispatch integration', () => {
       expect(parsed.first_hooks.map((hook: any) => hook.id)).toContain('search-before-rerank');
       expect(parsed.first_hooks.map((hook: any) => hook.id)).toContain('skill-gate');
       expect(parsed.residual_risks.map((risk: any) => risk.owner)).toContain('audit_hardening');
+      expect(stdout).not.toMatch(internalPlanningLabels);
+      expect(existsSync(join(home, '.gbrain', 'config.json'))).toBe(false);
+      expect(exitCode).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('company permission-status prints hosted permission status without DB connection', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-cli-help-'));
+    try {
+      const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'company', 'permission-status', '--json'], {
+        cwd: repoRoot,
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: isolatedEnv(home),
+      });
+      const stdout = await new Response(proc.stdout).text();
+      const exitCode = await proc.exited;
+      const parsed = JSON.parse(stdout);
+      expect(parsed.kind).toBe('company_permission_status');
+      expect(parsed.claim_status).toBe('narrow_app_layer_claim_supported');
+      expect(parsed.supported_claims.map((claim: any) => claim.id)).toContain('retrieval-rerank-cache');
+      expect(parsed.unsupported_claims.map((claim: any) => claim.id)).toContain('database-acl-rls');
+      expect(parsed.residual_risks.map((risk: any) => risk.owner)).toContain('audit_hardening');
+      expect(parsed.audit_handoff.failure_mode.default).toBe('fail_closed_for_hosted_company_operations');
       expect(stdout).not.toMatch(internalPlanningLabels);
       expect(existsSync(join(home, '.gbrain', 'config.json'))).toBe(false);
       expect(exitCode).toBe(0);

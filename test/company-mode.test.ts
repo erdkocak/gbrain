@@ -23,7 +23,9 @@ describe('company mode skeleton', () => {
     expect(cfg.policy_enforcement).toBe('deferred');
     expect(cfg.security_claim).toBe('none_trusted_workspace_only');
     expect(cfg.hosted_skill_exposure).toBe(COMPANY_HOSTED_SKILL_EXPOSURE);
-    expect(cfg.hosted_surface.mode).toBe('trusted_pilot_clients_only');
+    expect(cfg.hosted_surface.mode).toBe('reviewed_hosted_mcp_operations_only');
+    expect(cfg.hosted_surface.security_claim).toBe('app_layer_permissions_reviewed_tools_only');
+    expect(cfg.hosted_surface.mcp_surface.policy_enforcement).toBe('application_layer_reviewed_operations');
     expect(cfg.hosted_surface.skill_gate.default).toBe('deny');
     expect(cfg.hosted_surface.skill_gate.allowlist.map((rule) => rule.name)).toEqual([...COMPANY_HOSTED_SKILL_ALLOWLIST]);
     expect(cfg.hosted_surface.skill_gate.advisory_only).toEqual([...COMPANY_HOSTED_ADVISORY_ONLY_SKILLS]);
@@ -59,6 +61,7 @@ describe('company mode skeleton', () => {
     expect(sourceConfig.metadata_placeholders).toEqual([...COMPANY_METADATA_PLACEHOLDER_FIELDS]);
     expect(sourceConfig.hosted_skill_exposure).toBe(COMPANY_HOSTED_SKILL_EXPOSURE);
     expect(sourceConfig.hosted_surface.skill_gate.default).toBe('deny');
+    expect(sourceConfig.hosted_surface.security_claim).toBe('app_layer_permissions_reviewed_tools_only');
 
     expect(configSet['brain.mode']).toBe('company');
     expect(configSet['company.mode']).toBe('trusted_workspace');

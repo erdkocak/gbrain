@@ -52,7 +52,7 @@ export const COMPANY_HOSTED_REVIEWED_DIRECT_TOOL_ALLOWLIST = [
 ] as const;
 
 export const COMPANY_HOSTED_DISABLED_SURFACES = [
-  'hosted_writes_for_normal_users',
+  'broad_hosted_writes_for_normal_users',
   'direct_db_credentials_for_normal_secure_users',
   'analytics_reads',
   'maintenance_dream_cycle_automation',
@@ -87,14 +87,14 @@ export interface CompanyHostedToolRule {
 
 export interface CompanyHostedSurfaceConfig {
   version: typeof COMPANY_HOSTED_SURFACE_VERSION;
-  mode: 'trusted_pilot_clients_only';
-  security_claim: 'none_trusted_workspace_only';
-  normal_secure_users: 'not_supported_until_permission_enforcement';
+  mode: 'reviewed_hosted_mcp_operations_only';
+  security_claim: 'app_layer_permissions_reviewed_tools_only';
+  normal_secure_users: 'hosted_mcp_reviewed_operations_only';
   direct_db_credentials: 'admin_development_only_not_for_normal_secure_users';
   mcp_surface: {
-    clients: 'trusted_company_workspace_pilot_clients_only';
-    writes: 'disabled_for_normal_hosted_users';
-    policy_enforcement: 'deferred';
+    clients: 'resolved_company_users_only';
+    writes: 'put_page_only_with_policy_authorization';
+    policy_enforcement: 'application_layer_reviewed_operations';
   };
   skill_gate: {
     default: 'deny';
@@ -123,14 +123,14 @@ export function buildCompanyHostedSurfaceConfig(): CompanyHostedSurfaceConfig {
   }));
   return {
     version: COMPANY_HOSTED_SURFACE_VERSION,
-    mode: 'trusted_pilot_clients_only',
-    security_claim: 'none_trusted_workspace_only',
-    normal_secure_users: 'not_supported_until_permission_enforcement',
+    mode: 'reviewed_hosted_mcp_operations_only',
+    security_claim: 'app_layer_permissions_reviewed_tools_only',
+    normal_secure_users: 'hosted_mcp_reviewed_operations_only',
     direct_db_credentials: 'admin_development_only_not_for_normal_secure_users',
     mcp_surface: {
-      clients: 'trusted_company_workspace_pilot_clients_only',
-      writes: 'disabled_for_normal_hosted_users',
-      policy_enforcement: 'deferred',
+      clients: 'resolved_company_users_only',
+      writes: 'put_page_only_with_policy_authorization',
+      policy_enforcement: 'application_layer_reviewed_operations',
     },
     skill_gate: {
       default: 'deny',

@@ -25,7 +25,7 @@ export const COMPANY_FOLLOWUP_DISABLED_ACTIONS = [
 ] as const;
 
 export const COMPANY_FOLLOWUP_DISABLED_SURFACES = [
-  'hosted_writes_for_normal_users',
+  'broad_hosted_writes_for_normal_users',
   'external_execution',
   'cron_webhooks',
   'minion_subagent_orchestration',

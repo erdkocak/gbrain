@@ -169,9 +169,9 @@ export interface GBrainConfig {
   schema_pack?: string;
 
   /**
-   * Company-brain trusted-workspace pilot marker. This is a product
-   * mode only: it reserves future policy metadata names but does not enforce
-   * ACLs, RLS, or secure multi-user behavior.
+   * Company-brain trusted-workspace marker. The local mode marker itself does
+   * not grant database ACL/RLS behavior; reviewed hosted MCP operations enforce
+   * application-layer company permissions separately.
    */
   company?: {
     kind: 'company';

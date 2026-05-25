@@ -46,6 +46,10 @@ import {
   buildCompanyEnforcementHandoff,
   type CompanyEnforcementHandoff,
 } from '../core/company-enforcement-handoff.ts';
+import {
+  buildCompanyPermissionStatus,
+  type CompanyPermissionStatus,
+} from '../core/company-permission-status.ts';
 import { isAvailable } from '../core/ai/gateway.ts';
 
 const HELP = `Usage:
@@ -61,6 +65,7 @@ const HELP = `Usage:
   gbrain company policy grants <user-id> [options]
   gbrain company policy context [identity options]
   gbrain company enforcement-handoff [options]
+  gbrain company permission-status [options]
 
 Local/manual company memory for a trusted workspace pilot.
 Ingest writes meeting, doc, and evidence pages with file provenance. Extract
@@ -70,12 +75,16 @@ meetings, docs, and evidence. Follow-up drafting produces local drafts only;
 it does not send email, post messages, create tickets, run webhooks, invoke
 subagents, or execute external actions. Hosted skill exposure is deny-by-
 default for trusted pilot clients only. Company policies are represented and
-resolvable for local/admin inspection, but not yet fully enforced.
+resolvable for local/admin inspection. Reviewed hosted MCP operations enforce
+application-layer permissions for resolved company users, but this is not
+database-level ACL/RLS or durable audit.
 The enforcement handoff command prints permission-enforcement hook order and residual risks;
 it is a plan, not an authorization gate.
+The permission-status command prints the narrow reviewed hosted MCP permission claim,
+residual risks, and audit-hardening handoff.
 These commands do not start live integrations, cron, webhooks, background
-connectors, hosted write access, query cache, hot-memory, code-intelligence
-reads, analytics reads, or dream-cycle outputs.
+connectors, broad hosted write access, policy-safe query cache reuse,
+hot-memory, analytics reads, or dream-cycle outputs.
 
 Meeting options:
   --title TITLE          Meeting title
@@ -144,6 +153,7 @@ type Parsed =
   | ({ kind: 'policy-grants'; userId: string; sourceId: string | undefined; json: boolean })
   | ({ kind: 'policy-context'; input: CompanyRequestContextPreviewInput; json: boolean })
   | ({ kind: 'enforcement-handoff'; json: boolean })
+  | ({ kind: 'permission-status'; json: boolean })
   | { help: true };
 
 export async function runCompany(engine: BrainEngine | null, args: string[]): Promise<void> {
@@ -154,6 +164,10 @@ export async function runCompany(engine: BrainEngine | null, args: string[]): Pr
   }
   if (parsed.kind === 'enforcement-handoff') {
     printEnforcementHandoff(buildCompanyEnforcementHandoff(), parsed.json);
+    return;
+  }
+  if (parsed.kind === 'permission-status') {
+    printPermissionStatus(buildCompanyPermissionStatus(), parsed.json);
     return;
   }
   if (!engine) {
@@ -258,9 +272,23 @@ function parseArgs(args: string[]): Parsed {
     }
     return { kind: 'enforcement-handoff', json };
   }
+  if (
+    group === 'permission-status'
+    || group === 'permission'
+  ) {
+    const statusArgs = [subcommand, ...rest].filter((v): v is string => typeof v === 'string');
+    let json = false;
+    for (const arg of statusArgs) {
+      if (arg === '--json') { json = true; continue; }
+      if (arg.startsWith('--')) unknownFlag(arg);
+      console.error('Usage: gbrain company permission-status [--json]');
+      process.exit(2);
+    }
+    return { kind: 'permission-status', json };
+  }
 
   if (group !== 'ingest' || (subcommand !== 'meeting' && subcommand !== 'doc')) {
-    console.error('Usage: gbrain company <ingest|extract|query|decisions|follow-up|hosted-surface|policy|enforcement-handoff> ...');
+    console.error('Usage: gbrain company <ingest|extract|query|decisions|follow-up|hosted-surface|policy|enforcement-handoff|permission-status> ...');
     console.error('Run `gbrain company --help` for details.');
     process.exit(2);
   }
@@ -772,7 +800,7 @@ function printHostedSurfaceResult(result: CompanyHostedSurfaceConfig, json: bool
   for (const surface of result.disabled_surfaces) {
     console.log(`    - ${surface}`);
   }
-  console.log('  note: trusted pilot clients only; normal secure users still need permission enforcement');
+  console.log('  note: reviewed hosted tools use application-layer permissions; direct DB credentials, durable audit, broad tools, and external execution remain unavailable');
 }
 
 function printPolicySeedInspection(result: CompanyPolicySeedInspection, json: boolean): void {
@@ -857,6 +885,35 @@ function printEnforcementHandoff(result: CompanyEnforcementHandoff, json: boolea
   for (const risk of result.residual_risks) {
     console.log(`  - ${risk.id}: ${risk.owner}`);
   }
+}
+
+function printPermissionStatus(result: CompanyPermissionStatus, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log('company permission status:');
+  console.log(`  kind:        ${result.kind}`);
+  console.log(`  claim:       ${result.claim}`);
+  console.log(`  scope:       ${result.proof_scope.protected_path}`);
+  console.log(`  enforcement: ${result.proof_scope.enforcement_layer}`);
+  console.log('');
+  console.log('Supported claims:');
+  for (const claim of result.supported_claims) {
+    console.log(`  - ${claim.id}: ${claim.status}`);
+  }
+  console.log('');
+  console.log('Not claimed:');
+  for (const claim of result.unsupported_claims) {
+    console.log(`  - ${claim.id}: ${claim.requirement}`);
+  }
+  console.log('');
+  console.log('Residual risks:');
+  for (const risk of result.residual_risks) {
+    console.log(`  - ${risk.id}: ${risk.owner}`);
+  }
+  console.log('');
+  console.log(`Audit failure mode: ${result.audit_handoff.failure_mode.default}`);
 }
 
 function formatList(values: readonly string[]): string {

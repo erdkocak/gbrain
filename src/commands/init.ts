@@ -802,12 +802,12 @@ function printCompanyModeSummary(config: CompanyModeConfig): void {
   if (config.policy && typeof config.policy === 'object') {
     const policy = config.policy as { metadata?: { policy_version?: string } };
     if (policy.metadata?.policy_version) {
-      console.log(`  Policy seed: ${policy.metadata.policy_version} (represented, not enforced).`);
+      console.log(`  Policy seed: ${policy.metadata.policy_version} (used by reviewed hosted permission checks).`);
     }
   }
-  console.log('  Enforcement deferred: no ACL, RLS, or secure multi-user claim.');
+  console.log('  Hosted permissions: reviewed MCP operations only; no database ACL/RLS claim.');
   console.log('  Hosted skill exposure: deny-by-default trusted pilot allowlist only.');
-  console.log('  Hosted writes and external follow-up execution remain disabled.');
+  console.log('  Broad hosted writes and external follow-up execution remain disabled.');
 }
 
 async function applyCompanyModeAndLayout(engine: Awaited<ReturnType<typeof createEngine>>): Promise<CompanyModeConfig> {
