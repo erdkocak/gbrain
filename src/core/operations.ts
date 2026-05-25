@@ -9,7 +9,7 @@ import type { BrainEngine } from './engine.ts';
 import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
 import type { PageType } from './types.ts';
-import { importFromContent } from './import-file.ts';
+import { importFromContent, type ImportResult } from './import-file.ts';
 import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
 import { mkdirSync, writeFileSync, existsSync, statSync } from 'fs';
 import { dirname } from 'path';
@@ -40,6 +40,7 @@ import {
 import {
   isHostedCompanyWriteEnforced,
   prepareHostedCompanyPutPageContent,
+  type CompanyHostedWriteAuditMetadata,
 } from './company-write-auth.ts';
 import * as db from './db.ts';
 import { VERSION } from '../version.ts';
@@ -420,6 +421,22 @@ export interface OperationContext {
    * phases. Presence of this object does not enforce policy by itself.
    */
   companyRequestContext?: CompanyRequestContext;
+  /**
+   * Hosted company put_page writes populate this with redacted audit metadata
+   * after write authorization prepares or denies stamped content.
+   */
+  companyHostedWriteAudit?: CompanyHostedWriteAuditMetadata;
+  /**
+   * Hosted MCP dispatch may install this hook so put_page records the prepared
+   * write intent after authorization but before importFromContent commits.
+   */
+  companyHostedWriteAttemptAudit?: () => Promise<void>;
+  /**
+   * Hosted MCP dispatch may install this hook so put_page records the final
+   * write success audit row inside importFromContent's write transaction.
+   */
+  companyHostedWriteCommitAudit?: (tx: BrainEngine, result: ImportResult) => Promise<void>;
+  companyHostedWriteFinalAuditAppended?: boolean;
 }
 
 /**
@@ -682,10 +699,13 @@ const put_page: Operation = {
       ...(activePack ? { activePack } : {}),
     });
     if (!preparedCompanyContent.ok) {
+      ctx.companyHostedWriteAudit = preparedCompanyContent.audit;
       throw new OperationError('permission_denied', preparedCompanyContent.message);
     }
+    ctx.companyHostedWriteAudit = preparedCompanyContent.audit;
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
     const hostedCompanyWrite = preparedCompanyContent.enforced;
+    if (hostedCompanyWrite) await ctx.companyHostedWriteAttemptAudit?.();
 
     // Skip embedding when the AI gateway has no embedding provider configured.
     // Checks all auth env vars for the resolved provider, not just OPENAI_API_KEY,
@@ -707,6 +727,9 @@ const put_page: Operation = {
       source_kind: provenanceKind,
       source_uri: provenanceUri,
       ingested_via: provenanceVia,
+      ...(hostedCompanyWrite && ctx.companyHostedWriteCommitAudit
+        ? { transactionalWriteAudit: ctx.companyHostedWriteCommitAudit }
+        : {}),
     });
 
     // v0.39 T13 — auto-prompt on first unknown-type write.

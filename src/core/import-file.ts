@@ -235,6 +235,11 @@ export async function importFromContent(
     source_kind?: string | null;
     source_uri?: string | null;
     ingested_via?: string | null;
+    /**
+     * Optional hook for callers that need a durable audit row committed in the
+     * same transaction as the markdown page write.
+     */
+    transactionalWriteAudit?: (tx: BrainEngine, result: ImportResult) => Promise<void>;
   } = {},
 ): Promise<ImportResult> {
   // v0.18.0+ multi-source: when caller is syncing under a non-default source,
@@ -340,6 +345,7 @@ export async function importFromContent(
   // schema DEFAULT — required for multi-source brains; harmless ('default')
   // for single-source callers.
   const txOpts = sourceId ? { sourceId } : undefined;
+  const importedResult: ImportResult = { slug, status: 'imported', chunks: chunks.length, parsedPage };
   await engine.transaction(async (tx) => {
     if (existing) await tx.createVersion(slug, txOpts);
 
@@ -439,9 +445,11 @@ export async function importFromContent(
         );
       } catch { /* same reason — silent skip */ }
     }
+
+    await opts.transactionalWriteAudit?.(tx, importedResult);
   });
 
-  return { slug, status: 'imported', chunks: chunks.length, parsedPage };
+  return importedResult;
 }
 
 /**

@@ -25,6 +25,7 @@ import {
 } from '../core/company-hosted-tool-gate.ts';
 import {
   appendCompanyAuditEvent,
+  appendCompanyAuditEventInTransaction,
   type CompanyAuditObjectRef,
   type CompanyAuditEventInput,
   type CompanyAuditEventType,
@@ -273,12 +274,146 @@ interface DispatchAuditEvent {
   denial_reason?: string | null;
 }
 
+async function appendHostedCompanyWriteAuditOrFailClosed(
+  ctx: OperationContext,
+  opts: DispatchOpts,
+  params: Record<string, unknown>,
+  requestId: string,
+  status: CompanyAuditStatus,
+  result: unknown,
+  denialReason: string | null,
+  auditEngine?: BrainEngine,
+): Promise<ToolResult | null> {
+  const audit = ctx.companyHostedWriteAudit;
+  if (!audit) {
+    const failure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, params, requestId, {
+      event_type: 'company.hosted.tool_call',
+      operation: 'put_page',
+      status: status === 'denied' ? 'denied' : 'failed',
+      args: params,
+      denial_reason: denialReason,
+    }, auditEngine);
+    return failure;
+  }
+
+  const resultCount = status === 'succeeded'
+    && !operationResultDryRun(result)
+    && operationResultStatus(result) !== 'skipped'
+    ? 1
+    : 0;
+  const writeFailure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, params, requestId, {
+    event_type: 'company.hosted.write_result',
+    operation: 'put_page',
+    status,
+    content_or_query: hostedCompanyWriteAuditPayload(audit, result),
+    result_count: resultCount,
+    object_ids_or_slugs: hostedCompanyWriteObjectRefs(audit),
+    denial_reason: status === 'succeeded' ? null : (audit.denial_reason ?? denialReason),
+  }, auditEngine);
+  if (writeFailure) return writeFailure;
+
+  if (!audit.derived_visibility_attempted) return null;
+  const derivedStatus = status === 'succeeded' && audit.derived_visibility_status === 'succeeded'
+    ? 'succeeded'
+    : status === 'failed'
+      ? 'failed'
+      : 'denied';
+  const derivedFailure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, params, requestId, {
+    event_type: 'company.hosted.derived_write',
+    operation: 'put_page',
+    status: derivedStatus,
+    content_or_query: hostedCompanyDerivedWriteAuditPayload(audit),
+    result_count: audit.input_object_ids_or_slugs.length,
+    object_ids_or_slugs: hostedCompanyWriteObjectRefs(audit),
+    denial_reason: derivedStatus === 'succeeded' ? null : (audit.denial_reason ?? denialReason),
+  }, auditEngine);
+  return derivedFailure;
+}
+
+async function appendHostedCompanyWriteAttemptAuditOrFailClosed(
+  ctx: OperationContext,
+  opts: DispatchOpts,
+  params: Record<string, unknown>,
+  requestId: string,
+): Promise<ToolResult | null> {
+  const audit = ctx.companyHostedWriteAudit;
+  if (!audit) return null;
+  return appendHostedCompanyAuditOrFailClosed(ctx, opts, params, requestId, {
+    event_type: 'company.hosted.write_result',
+    operation: 'put_page',
+    status: 'attempted',
+    content_or_query: hostedCompanyWriteAuditPayload(audit, null),
+    result_count: 0,
+    object_ids_or_slugs: hostedCompanyWriteObjectRefs(audit),
+  });
+}
+
+function hostedCompanyWriteAuditPayload(
+  audit: NonNullable<OperationContext['companyHostedWriteAudit']>,
+  result: unknown,
+): Record<string, unknown> {
+  return {
+    target_source_id: audit.target_source_id,
+    target_policy_ids_hash: audit.target_policy_ids_hash,
+    existing_policy_ids_hash: audit.existing_policy_ids_hash,
+    submitted_content_hash: audit.submitted_content_hash,
+    before_content_hash: audit.before_content_hash,
+    after_content_hash: audit.after_content_hash,
+    overwrite: audit.overwrite,
+    policy_reclassification_attempted: audit.policy_reclassification_attempted,
+    visibility_assignment: audit.visibility_assignment,
+    visibility_assignment_reason: audit.visibility_assignment_reason,
+    policy_decision_id: audit.policy_decision_id,
+    result_status: operationResultStatus(result),
+    dry_run: operationResultDryRun(result),
+  };
+}
+
+function hostedCompanyDerivedWriteAuditPayload(
+  audit: NonNullable<OperationContext['companyHostedWriteAudit']>,
+): Record<string, unknown> {
+  return {
+    target_source_id: audit.target_source_id,
+    target_policy_ids_hash: audit.target_policy_ids_hash,
+    input_count: audit.input_object_ids_or_slugs.length,
+    evidence_ref_count: audit.evidence_refs.length,
+    decision: audit.derived_visibility?.decision ?? 'reject',
+    reason: audit.derived_visibility_reason,
+    visibility_policy_ids_hash: audit.derived_visibility
+      ? audit.target_policy_ids_hash
+      : null,
+    policy_decision_id: audit.policy_decision_id,
+  };
+}
+
+function hostedCompanyWriteObjectRefs(
+  audit: NonNullable<OperationContext['companyHostedWriteAudit']>,
+): CompanyAuditObjectRef[] {
+  return uniqueSortedStrings([
+    audit.target_slug,
+    ...audit.input_object_ids_or_slugs,
+    ...audit.derived_from,
+    ...audit.evidence_refs,
+  ]);
+}
+
+function operationResultStatus(result: unknown): string | null {
+  if (!result || typeof result !== 'object') return null;
+  const status = (result as Record<string, unknown>).status;
+  return typeof status === 'string' ? status : null;
+}
+
+function operationResultDryRun(result: unknown): boolean {
+  return Boolean(result && typeof result === 'object' && (result as Record<string, unknown>).dry_run === true);
+}
+
 async function appendHostedCompanyAuditEvent(
   ctx: OperationContext,
   opts: DispatchOpts,
   params: Record<string, unknown>,
   requestId: string,
   event: DispatchAuditEvent,
+  auditEngine: BrainEngine = ctx.engine,
 ): Promise<boolean> {
   const companyContext = ctx.companyRequestContext;
   const input: CompanyAuditEventInput = {
@@ -309,8 +444,13 @@ async function appendHostedCompanyAuditEvent(
   }
 
   try {
-    const append = opts.companyAuditAppend ?? appendCompanyAuditEvent;
-    await append(ctx.engine, input);
+    if (opts.companyAuditAppend) {
+      await opts.companyAuditAppend(auditEngine, input);
+    } else if (auditEngine === ctx.engine) {
+      await appendCompanyAuditEvent(auditEngine, input);
+    } else {
+      await appendCompanyAuditEventInTransaction(auditEngine, input);
+    }
     return true;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -325,8 +465,9 @@ async function appendHostedCompanyAuditOrFailClosed(
   params: Record<string, unknown>,
   requestId: string,
   event: DispatchAuditEvent,
+  auditEngine?: BrainEngine,
 ): Promise<ToolResult | null> {
-  const appended = await appendHostedCompanyAuditEvent(ctx, opts, params, requestId, event);
+  const appended = await appendHostedCompanyAuditEvent(ctx, opts, params, requestId, event, auditEngine);
   if (appended || isBestEffortAuditOperation(event.operation)) return null;
   return errorToolResult(new OperationError('permission_denied', COMPANY_AUDIT_APPEND_FAILURE_MESSAGE));
 }
@@ -655,6 +796,26 @@ export async function dispatchToolCall(
       });
       if (auditFailure) return auditFailure;
     }
+    if (auditRequired && op.mutating && name === 'put_page') {
+      ctx.companyHostedWriteAttemptAudit = async () => {
+        const auditFailure = await appendHostedCompanyWriteAttemptAuditOrFailClosed(ctx, opts, safeParams, auditRequestId);
+        if (auditFailure) throw new OperationError('permission_denied', COMPANY_AUDIT_APPEND_FAILURE_MESSAGE);
+      };
+      ctx.companyHostedWriteCommitAudit = async (auditEngine, result) => {
+        const auditFailure = await appendHostedCompanyWriteAuditOrFailClosed(
+          ctx,
+          opts,
+          safeParams,
+          auditRequestId,
+          'succeeded',
+          result,
+          null,
+          auditEngine,
+        );
+        if (auditFailure) throw new OperationError('permission_denied', COMPANY_AUDIT_APPEND_FAILURE_MESSAGE);
+        ctx.companyHostedWriteFinalAuditAppended = true;
+      };
+    }
     const result = await op.handler(ctx, safeParams);
     const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     // v0.31 (eD3 + eE4): best-effort _meta.brain_hot_memory injection.
@@ -669,6 +830,18 @@ export async function dispatchToolCall(
         const msg = metaErr instanceof Error ? metaErr.message : String(metaErr);
         ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${msg}; degrading to no-_meta`);
       }
+    }
+    if (auditRequired && op.mutating && name === 'put_page' && ctx.companyHostedWriteFinalAuditAppended !== true) {
+      const auditFailure = await appendHostedCompanyWriteAuditOrFailClosed(
+        ctx,
+        opts,
+        safeParams,
+        auditRequestId,
+        'succeeded',
+        result,
+        null,
+      );
+      if (auditFailure) return auditFailure;
     }
     if (auditRequired && !op.mutating) {
       if (shouldAuditHostedCompanyReadResult(op)) {
@@ -693,6 +866,21 @@ export async function dispatchToolCall(
     }
     return out;
   } catch (e: unknown) {
+    if (auditRequired && op.mutating && name === 'put_page') {
+      const failureStatus: CompanyAuditStatus = e instanceof OperationError && e.code === 'permission_denied'
+        ? 'denied'
+        : 'failed';
+      const auditFailure = await appendHostedCompanyWriteAuditOrFailClosed(
+        ctx,
+        opts,
+        safeParams,
+        auditRequestId,
+        failureStatus,
+        null,
+        operationFailureAuditReason(e),
+      );
+      if (auditFailure) return auditFailure;
+    }
     if (auditRequired && !op.mutating) {
       const auditFailure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, safeParams, auditRequestId, {
         event_type: 'company.hosted.tool_call',

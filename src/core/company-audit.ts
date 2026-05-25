@@ -241,17 +241,25 @@ export async function appendCompanyAuditEvent(
   opts: { chain_id?: string } = {},
 ): Promise<CompanyAuditEventRecord> {
   const chainId = normalizeOptionalText(opts.chain_id) ?? COMPANY_AUDIT_CHAIN_ID;
-  return engine.transaction(async (tx) => {
-    await ensureCompanyAuditChainState(tx, chainId);
-    const stateRows = await tx.executeRaw<{ last_event_hash: string | null }>(
-      `SELECT last_event_hash FROM company_audit_chain_state WHERE chain_id = $1 FOR UPDATE`,
-      [chainId],
-    );
-    const previousEventHash = stateRows[0]?.last_event_hash ?? null;
-    const record = buildCompanyAuditEventRecord(input, previousEventHash);
+  return engine.transaction((tx) => appendCompanyAuditEventInTransaction(tx, input, { chain_id: chainId }));
+}
 
-    await tx.executeRaw(
-      `INSERT INTO company_audit_events (
+export async function appendCompanyAuditEventInTransaction(
+  engine: BrainEngine,
+  input: CompanyAuditEventInput,
+  opts: { chain_id?: string } = {},
+): Promise<CompanyAuditEventRecord> {
+  const chainId = normalizeOptionalText(opts.chain_id) ?? COMPANY_AUDIT_CHAIN_ID;
+  await ensureCompanyAuditChainState(engine, chainId);
+  const stateRows = await engine.executeRaw<{ last_event_hash: string | null }>(
+    `SELECT last_event_hash FROM company_audit_chain_state WHERE chain_id = $1 FOR UPDATE`,
+    [chainId],
+  );
+  const previousEventHash = stateRows[0]?.last_event_hash ?? null;
+  const record = buildCompanyAuditEventRecord(input, previousEventHash);
+
+  await engine.executeRaw(
+    `INSERT INTO company_audit_events (
          event_id, schema_version, event_type, event_timestamp, request_id, session_id,
          user_id, client_id, client_name, transport, operation, source_scope,
          policy_decision_id, policy_version, policy_hash, readable_policy_ids_hash,
@@ -264,44 +272,43 @@ export async function appendCompanyAuditEvent(
          $17, $18, $19, $20,
          $21::jsonb, $22, $23, $24, $25
        )`,
-      [
-        record.event_id,
-        record.schema_version,
-        record.event_type,
-        record.timestamp,
-        record.request_id,
-        record.session_id,
-        record.user_id,
-        record.client_id,
-        record.client_name,
-        record.transport,
-        record.operation,
-        JSON.stringify(record.source_scope),
-        record.policy_decision_id,
-        record.policy_version,
-        record.policy_hash,
-        record.readable_policy_ids_hash,
-        record.writable_policy_ids_hash,
-        record.args_hash,
-        record.content_or_query_hash,
-        record.result_count,
-        JSON.stringify(record.object_ids_or_slugs),
-        record.status,
-        record.denial_reason,
-        record.previous_event_hash,
-        record.event_hash,
-      ],
-    );
+    [
+      record.event_id,
+      record.schema_version,
+      record.event_type,
+      record.timestamp,
+      record.request_id,
+      record.session_id,
+      record.user_id,
+      record.client_id,
+      record.client_name,
+      record.transport,
+      record.operation,
+      JSON.stringify(record.source_scope),
+      record.policy_decision_id,
+      record.policy_version,
+      record.policy_hash,
+      record.readable_policy_ids_hash,
+      record.writable_policy_ids_hash,
+      record.args_hash,
+      record.content_or_query_hash,
+      record.result_count,
+      JSON.stringify(record.object_ids_or_slugs),
+      record.status,
+      record.denial_reason,
+      record.previous_event_hash,
+      record.event_hash,
+    ],
+  );
 
-    await tx.executeRaw(
-      `UPDATE company_audit_chain_state
+  await engine.executeRaw(
+    `UPDATE company_audit_chain_state
           SET last_event_hash = $2, updated_at = now()
         WHERE chain_id = $1`,
-      [chainId, record.event_hash],
-    );
+    [chainId, record.event_hash],
+  );
 
-    return record;
-  });
+  return record;
 }
 
 export async function applyCompanyAuditMutation(

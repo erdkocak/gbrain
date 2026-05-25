@@ -5,7 +5,11 @@ import { applyCompanyModeSkeleton } from '../src/core/company-mode.ts';
 import { applyCompanyLayout } from '../src/core/company-layout.ts';
 import { applyCompanyPolicySeed, parseCompanyPolicySeedYaml } from '../src/core/company-policy.ts';
 import { COMPANY_HOSTED_TOOL_GATE_DENIAL } from '../src/core/company-hosted-tool-gate.ts';
-import { appendCompanyAuditEvent, hashCompanyAuditValue } from '../src/core/company-audit.ts';
+import {
+  appendCompanyAuditEvent,
+  appendCompanyAuditEventInTransaction,
+  hashCompanyAuditValue,
+} from '../src/core/company-audit.ts';
 import {
   dispatchToolCall,
   listVisibleOperationsForDispatch,
@@ -134,6 +138,14 @@ function parseToolJson(result: ToolResult): any {
 
 function jsonColumn<T>(value: unknown): T {
   return typeof value === 'string' ? JSON.parse(value) as T : value as T;
+}
+
+function appendAuditFromProvidedEngine(...args: Parameters<typeof appendCompanyAuditEvent>) {
+  const [auditEngine, input, opts] = args;
+  const db = (auditEngine as unknown as { db?: { transaction?: unknown } }).db;
+  return typeof db?.transaction === 'function'
+    ? appendCompanyAuditEvent(auditEngine, input, opts)
+    : appendCompanyAuditEventInTransaction(auditEngine, input, opts);
 }
 
 describe('hosted company dispatch audit', () => {
@@ -374,14 +386,11 @@ describe('hosted company dispatch audit', () => {
     expect(JSON.stringify(rows)).not.toContain('invalid_params');
   });
 
-  test('records only the pre-handler control-plane attempt for hosted writes', async () => {
+  test('records control-plane and write-result audit for hosted writes', async () => {
     const appendCalls: string[] = [];
     const auditAppend = async (...args: Parameters<typeof appendCompanyAuditEvent>) => {
-      appendCalls.push(`${args[1].operation}:${args[1].status}`);
-      if (args[1].status !== 'attempted') {
-        throw new Error('final hosted write status audit is deferred');
-      }
-      return appendCompanyAuditEvent(...args);
+      appendCalls.push(`${args[1].event_type}:${args[1].operation}:${args[1].status}`);
+      return appendAuditFromProvidedEngine(...args);
     };
 
     const result = await dispatchToolCall(engine, 'put_page', {
@@ -396,13 +405,21 @@ describe('hosted company dispatch audit', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(appendCalls).toEqual(['put_page:attempted']);
+    expect(appendCalls).toEqual([
+      'company.hosted.tool_call:put_page:attempted',
+      'company.hosted.write_result:put_page:attempted',
+      'company.hosted.write_result:put_page:succeeded',
+    ]);
 
     const page = await engine.getPage(READABLE_SLUG, { sourceId: 'company' });
     expect(page?.slug).toBe(READABLE_SLUG);
 
     const rows = await auditRows('put_page');
-    expect(rows.map((row) => row.status)).toEqual(['attempted']);
+    expect(rows.map((row) => `${row.event_type}:${row.status}`)).toEqual([
+      'company.hosted.tool_call:attempted',
+      'company.hosted.write_result:attempted',
+      'company.hosted.write_result:succeeded',
+    ]);
   });
 
   test('fails closed when required audit append fails and keeps whoami best-effort', async () => {
