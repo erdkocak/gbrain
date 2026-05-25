@@ -6,18 +6,32 @@
  * + missing-context bugs; this module exists to prevent that recurring.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { Operation, OperationContext, AuthInfo } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildCompanyRequestContextFromOperationContext } from '../core/company-request-context.ts';
 import type { CompanyIdentityInput, CompanyRequestContext } from '../core/company-request-context.ts';
-import { enforceHostedCompanyRequestGate, evaluateHostedCompanyRequestGate } from '../core/company-request-gate.ts';
+import {
+  COMPANY_REQUEST_GATE_DENIAL,
+  evaluateHostedCompanyRequestGate,
+  type CompanyRequestGateResult,
+} from '../core/company-request-gate.ts';
 import { hostedCompanyMutatingOperationDenial } from '../core/company-write-auth.ts';
 import {
   filterHostedCompanyOperations,
   hostedCompanyToolAccessDenial,
 } from '../core/company-hosted-tool-gate.ts';
+import {
+  appendCompanyAuditEvent,
+  type CompanyAuditEventInput,
+  type CompanyAuditEventType,
+  type CompanyAuditStatus,
+} from '../core/company-audit.ts';
+import { isValidSourceId } from '../core/source-id.ts';
+
+type CompanyAuditAppender = typeof appendCompanyAuditEvent;
 
 export interface ToolResult {
   content: { type: 'text'; text: string }[];
@@ -87,6 +101,11 @@ export interface DispatchOpts {
   companyIdentity?: CompanyIdentityInput;
   requestId?: string;
   sessionId?: string | null;
+  /**
+   * Optional audit appender override for failure-injection tests. Production
+   * dispatch uses the durable hash-chained audit appender.
+   */
+  companyAuditAppend?: CompanyAuditAppender;
 }
 
 /**
@@ -209,6 +228,209 @@ const stderrLogger: OperationContext['logger'] = {
   error: (msg: string) => process.stderr.write(`[error] ${msg}\n`),
 };
 
+const COMPANY_AUDIT_APPEND_FAILURE_MESSAGE =
+  'Company audit append failed for hosted company request.';
+
+function errorToolResult(error: OperationError): ToolResult {
+  return { content: [{ type: 'text', text: JSON.stringify(error.toJSON(), null, 2) }], isError: true };
+}
+
+function invalidParamsToolResult(message: string): ToolResult {
+  return {
+    content: [{ type: 'text', text: JSON.stringify({ error: 'invalid_params', message }, null, 2) }],
+    isError: true,
+  };
+}
+
+function unknownToolResult(name: string): ToolResult {
+  return {
+    content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_tool', message: `Unknown tool: ${name}` }, null, 2) }],
+    isError: true,
+  };
+}
+
+function internalErrorToolResult(e: unknown): ToolResult {
+  const msg = e instanceof Error ? e.message : String(e);
+  return {
+    content: [{ type: 'text', text: JSON.stringify({ error: 'internal_error', message: msg }, null, 2) }],
+    isError: true,
+  };
+}
+
+interface DispatchAuditEvent {
+  event_type: CompanyAuditEventType;
+  operation: string;
+  status: CompanyAuditStatus;
+  args?: unknown;
+  result_count?: number | null;
+  object_ids_or_slugs?: readonly (string | number)[];
+  denial_reason?: string | null;
+}
+
+async function appendHostedCompanyAuditEvent(
+  ctx: OperationContext,
+  opts: DispatchOpts,
+  params: Record<string, unknown>,
+  requestId: string,
+  event: DispatchAuditEvent,
+): Promise<boolean> {
+  const companyContext = ctx.companyRequestContext;
+  const input: CompanyAuditEventInput = {
+    event_type: event.event_type,
+    request_id: requestId,
+    session_id: normalizeTransportAuditId(opts.sessionId),
+    user_id: companyContext?.userId ?? ctx.auth?.companyUserId ?? opts.companyIdentity?.userId ?? null,
+    client_id: companyContext?.clientId ?? ctx.auth?.clientId ?? opts.companyIdentity?.clientId ?? null,
+    client_name: companyContext?.clientName ?? ctx.auth?.clientName ?? opts.companyIdentity?.clientName ?? null,
+    transport: companyContext?.transport ?? inferAuditTransport(ctx),
+    operation: event.operation,
+    source_scope: auditSourceScope(ctx, params),
+    policy_decision_id: companyContext?.policyDecisionId ?? null,
+    policy_version: companyContext?.policyVersion ?? null,
+    policy_hash: companyContext?.policyHash ?? null,
+    readable_policy_ids: companyContext?.readablePolicyIds ?? null,
+    writable_policy_ids: companyContext?.writablePolicyIds ?? null,
+    result_count: event.result_count ?? null,
+    object_ids_or_slugs: event.object_ids_or_slugs ?? [],
+    status: event.status,
+    denial_reason: event.denial_reason ?? null,
+  };
+  if (Object.prototype.hasOwnProperty.call(event, 'args')) {
+    input.args = event.args;
+  }
+
+  try {
+    const append = opts.companyAuditAppend ?? appendCompanyAuditEvent;
+    await append(ctx.engine, input);
+    return true;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    ctx.logger.error(`[mcp] hosted company audit append failed for ${event.operation}: ${msg}`);
+    return false;
+  }
+}
+
+async function appendHostedCompanyAuditOrFailClosed(
+  ctx: OperationContext,
+  opts: DispatchOpts,
+  params: Record<string, unknown>,
+  requestId: string,
+  event: DispatchAuditEvent,
+): Promise<ToolResult | null> {
+  const appended = await appendHostedCompanyAuditEvent(ctx, opts, params, requestId, event);
+  if (appended || isBestEffortAuditOperation(event.operation)) return null;
+  return errorToolResult(new OperationError('permission_denied', COMPANY_AUDIT_APPEND_FAILURE_MESSAGE));
+}
+
+function resolveHostedCompanyAuditRequestId(ctx: OperationContext, opts: DispatchOpts): string {
+  return ctx.companyRequestContext?.requestId ?? opts.requestId ?? randomUUID();
+}
+
+function isBestEffortAuditOperation(operation: string): boolean {
+  return operation === 'whoami';
+}
+
+function requestGateAuditReason(result: CompanyRequestGateResult): string | null {
+  if (result.allowed || result.reason === 'allowed' || result.reason === 'not_hosted_company_request') return null;
+  return `request_gate_${result.reason}`;
+}
+
+function operationFailureAuditReason(e: unknown): string {
+  if (e instanceof OperationError) return `operation_error_${safeAuditReasonCode(e.code)}`;
+  return 'internal_error';
+}
+
+function safeAuditReasonCode(value: string): string {
+  const normalized = value.replace(/[^a-zA-Z0-9_:-]/g, '_');
+  return normalized.length > 0 ? normalized : 'unknown';
+}
+
+function inferAuditTransport(ctx: OperationContext): string {
+  if (ctx.remote === false) return 'local_cli';
+  if (!ctx.auth) return 'stdio_mcp';
+  return ctx.auth.clientId.startsWith('gbrain_cl_') ? 'hosted_mcp_oauth' : 'hosted_mcp_legacy_token';
+}
+
+function auditSourceScope(ctx: OperationContext, params: Record<string, unknown>): NonNullable<CompanyAuditEventInput['source_scope']> {
+  const companyContext = ctx.companyRequestContext;
+  const sourceId = auditSourceId(companyContext?.sourceId ?? ctx.sourceId ?? ctx.auth?.sourceId ?? null);
+  const allowedSourceIds = uniqueSortedStrings(
+    (companyContext?.allowedSources?.length ? companyContext.allowedSources : ctx.auth?.allowedSources ?? [])
+      .map((entry) => auditSourceId(entry))
+      .filter((entry): entry is string => entry !== null),
+  );
+  const normalizedAllowedSourceIds = allowedSourceIds.length > 0
+    ? allowedSourceIds
+    : sourceId
+      ? [sourceId]
+      : [];
+
+  return {
+    source_id: sourceId,
+    requested_source_id: requestedAuditSourceId(params),
+    allowed_source_ids: normalizedAllowedSourceIds,
+    used_source_override: hasOwn(params, 'source_id') || hasOwn(params, 'sourceId') || params.all_sources === true,
+    used_allowed_sources_override: hasOwn(params, 'allowed_sources')
+      || hasOwn(params, 'allowedSources')
+      || hasOwn(params, 'source_ids')
+      || hasOwn(params, 'sourceIds'),
+    federated_read: normalizedAllowedSourceIds.length > 1,
+  };
+}
+
+function requestedAuditSourceId(params: Record<string, unknown>): string | null {
+  if (params.all_sources === true) return '__all__';
+  const direct = auditSourceId(stringAuditParam(params, 'source_id') ?? stringAuditParam(params, 'sourceId'), {
+    allowAll: true,
+  });
+  if (direct) return direct;
+
+  const requested = uniqueSortedStrings([
+    ...auditSourceIdArrayParam(params, 'allowed_sources'),
+    ...auditSourceIdArrayParam(params, 'allowedSources'),
+    ...auditSourceIdArrayParam(params, 'source_ids'),
+    ...auditSourceIdArrayParam(params, 'sourceIds'),
+  ]);
+  if (requested.includes('__all__')) return '__all__';
+  return requested.length === 1 ? requested[0]! : null;
+}
+
+function auditSourceIdArrayParam(params: Record<string, unknown>, key: string): string[] {
+  const value = params[key];
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => auditSourceId(entry, { allowAll: true }))
+    .filter((entry): entry is string => entry !== null);
+}
+
+function auditSourceId(value: unknown, opts: { allowAll?: boolean } = {}): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (opts.allowAll && trimmed === '__all__') return trimmed;
+  return isValidSourceId(trimmed) ? trimmed : null;
+}
+
+function stringAuditParam(params: Record<string, unknown>, key: string): string | null {
+  const value = params[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normalizeTransportAuditId(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 128) return null;
+  return /^[A-Za-z0-9._:@/-]+$/.test(trimmed) ? trimmed : null;
+}
+
+function uniqueSortedStrings(values: readonly string[]): string[] {
+  return [...new Set(values)].sort();
+}
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
 export function buildOperationContext(
   engine: BrainEngine,
   params: Record<string, unknown>,
@@ -259,8 +481,25 @@ export async function listVisibleOperationsForDispatch(
   await attachCompanyRequestContext(ctx, {}, opts);
   const requestGate = await evaluateHostedCompanyRequestGate(ctx, {});
   if (!requestGate.gated) return visible;
-  if (!requestGate.allowed) return [];
-  return filterHostedCompanyOperations(ctx, visible);
+  const auditRequestId = resolveHostedCompanyAuditRequestId(ctx, opts);
+  if (!requestGate.allowed) {
+    await appendHostedCompanyAuditEvent(ctx, opts, {}, auditRequestId, {
+      event_type: 'company.hosted.denial',
+      operation: 'tools/list',
+      status: 'denied',
+      denial_reason: requestGateAuditReason(requestGate),
+    });
+    return [];
+  }
+  const filtered = await filterHostedCompanyOperations(ctx, visible);
+  const appended = await appendHostedCompanyAuditEvent(ctx, opts, {}, auditRequestId, {
+    event_type: 'company.hosted.tool_list',
+    operation: 'tools/list',
+    status: 'succeeded',
+    result_count: filtered.length,
+    object_ids_or_slugs: filtered.map((op) => op.name).sort(),
+  });
+  return appended ? filtered : [];
 }
 
 /**
@@ -275,6 +514,7 @@ export async function dispatchToolCall(
   params: Record<string, unknown> | undefined,
   opts: DispatchOpts = {},
 ): Promise<ToolResult> {
+  const safeParams = params || {};
   const op = operations.find(o => o.name === name);
   if (!op) {
     // Always return JSON-shaped error content. v0.31 e2e tests
@@ -282,40 +522,129 @@ export async function dispatchToolCall(
     // plain `Error: ...` string here breaks the contract on every
     // unknown-op path and the resulting test failure looked like a
     // transport bug.
-    return {
-      content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_tool', message: `Unknown tool: ${name}` }, null, 2) }],
-      isError: true,
-    };
+    const ctx = buildOperationContext(engine, safeParams, opts);
+    await attachCompanyRequestContext(ctx, safeParams, opts);
+    const requestGate = await evaluateHostedCompanyRequestGate(ctx, safeParams);
+    if (!requestGate.gated) return unknownToolResult(name);
+
+    const auditRequestId = resolveHostedCompanyAuditRequestId(ctx, opts);
+    const auditFailure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, safeParams, auditRequestId, {
+      event_type: 'company.hosted.denial',
+      operation: 'unknown_tool',
+      status: 'denied',
+      args: safeParams,
+      denial_reason: requestGate.allowed ? 'unknown_tool' : requestGateAuditReason(requestGate),
+    });
+    if (auditFailure) return auditFailure;
+    if (!requestGate.allowed) {
+      return errorToolResult(new OperationError('permission_denied', COMPANY_REQUEST_GATE_DENIAL));
+    }
+    return unknownToolResult(name);
   }
 
-  const safeParams = params || {};
+  const ctx = buildOperationContext(engine, safeParams, opts);
+  await attachCompanyRequestContext(ctx, safeParams, opts);
+  const requestGate = await evaluateHostedCompanyRequestGate(ctx, safeParams);
+  const auditRequired = requestGate.gated;
+  const auditRequestId = auditRequired ? resolveHostedCompanyAuditRequestId(ctx, opts) : '';
+
+  if (auditRequired && !requestGate.allowed) {
+    const auditFailure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, safeParams, auditRequestId, {
+      event_type: 'company.hosted.denial',
+      operation: name,
+      status: 'denied',
+      args: safeParams,
+      denial_reason: requestGateAuditReason(requestGate),
+    });
+    if (auditFailure) return auditFailure;
+    return errorToolResult(new OperationError('permission_denied', COMPANY_REQUEST_GATE_DENIAL));
+  }
+
+  if (auditRequired && op.localOnly && (opts.remote ?? true) !== false) {
+    const err = new OperationError(
+      'permission_denied',
+      `${name} is local-only and cannot be invoked by remote MCP callers.`,
+    );
+    const auditFailure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, safeParams, auditRequestId, {
+      event_type: 'company.hosted.denial',
+      operation: name,
+      status: 'denied',
+      args: safeParams,
+      denial_reason: 'local_only_tool',
+    });
+    if (auditFailure) return auditFailure;
+    return errorToolResult(err);
+  }
+
+  const writeDenial = auditRequired
+    ? hostedCompanyMutatingOperationDenial(ctx, { name, mutating: op.mutating })
+    : null;
+  if (writeDenial) {
+    const auditFailure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, safeParams, auditRequestId, {
+      event_type: 'company.hosted.denial',
+      operation: name,
+      status: 'denied',
+      args: safeParams,
+      denial_reason: 'hosted_write_gate_denied',
+    });
+    if (auditFailure) return auditFailure;
+    return errorToolResult(new OperationError('permission_denied', writeDenial));
+  }
+
+  const toolDenial = auditRequired ? await hostedCompanyToolAccessDenial(ctx, op) : null;
+  if (toolDenial) {
+    const auditFailure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, safeParams, auditRequestId, {
+      event_type: 'company.hosted.denial',
+      operation: name,
+      status: 'denied',
+      args: safeParams,
+      denial_reason: 'hosted_tool_gate_denied',
+    });
+    if (auditFailure) return auditFailure;
+    return errorToolResult(new OperationError('permission_denied', toolDenial));
+  }
+
   const validationError = validateParams(op, safeParams);
   if (validationError) {
-    return {
-      content: [{ type: 'text', text: JSON.stringify({ error: 'invalid_params', message: validationError }, null, 2) }],
-      isError: true,
-    };
+    if (auditRequired) {
+      const auditFailure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, safeParams, auditRequestId, {
+        event_type: 'company.hosted.tool_call',
+        operation: name,
+        status: 'failed',
+        args: safeParams,
+        denial_reason: 'invalid_params',
+      });
+      if (auditFailure) return auditFailure;
+    }
+    return invalidParamsToolResult(validationError);
   }
   if (op.localOnly && (opts.remote ?? true) !== false) {
     const err = new OperationError(
       'permission_denied',
       `${name} is local-only and cannot be invoked by remote MCP callers.`,
     );
-    return { content: [{ type: 'text', text: JSON.stringify(err.toJSON(), null, 2) }], isError: true };
+    if (auditRequired) {
+      const auditFailure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, safeParams, auditRequestId, {
+        event_type: 'company.hosted.denial',
+        operation: name,
+        status: 'denied',
+        args: safeParams,
+        denial_reason: 'local_only_tool',
+      });
+      if (auditFailure) return auditFailure;
+    }
+    return errorToolResult(err);
   }
 
-  const ctx = buildOperationContext(engine, safeParams, opts);
-  await attachCompanyRequestContext(ctx, safeParams, opts);
-
   try {
-    await enforceHostedCompanyRequestGate(ctx, safeParams);
-    const writeDenial = hostedCompanyMutatingOperationDenial(ctx, { name, mutating: op.mutating });
-    if (writeDenial) {
-      throw new OperationError('permission_denied', writeDenial);
-    }
-    const toolDenial = await hostedCompanyToolAccessDenial(ctx, op);
-    if (toolDenial) {
-      throw new OperationError('permission_denied', toolDenial);
+    if (auditRequired) {
+      const auditFailure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, safeParams, auditRequestId, {
+        event_type: 'company.hosted.tool_call',
+        operation: name,
+        status: 'attempted',
+        args: safeParams,
+      });
+      if (auditFailure) return auditFailure;
     }
     const result = await op.handler(ctx, safeParams);
     const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
@@ -332,19 +661,34 @@ export async function dispatchToolCall(
         ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${msg}; degrading to no-_meta`);
       }
     }
+    if (auditRequired && !op.mutating) {
+      const auditFailure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, safeParams, auditRequestId, {
+        event_type: 'company.hosted.tool_call',
+        operation: name,
+        status: 'succeeded',
+        args: safeParams,
+      });
+      if (auditFailure) return auditFailure;
+    }
     return out;
   } catch (e: unknown) {
+    if (auditRequired && !op.mutating) {
+      const auditFailure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, safeParams, auditRequestId, {
+        event_type: 'company.hosted.tool_call',
+        operation: name,
+        status: 'failed',
+        args: safeParams,
+        denial_reason: operationFailureAuditReason(e),
+      });
+      if (auditFailure) return auditFailure;
+    }
     if (e instanceof OperationError) {
-      return { content: [{ type: 'text', text: JSON.stringify(e.toJSON(), null, 2) }], isError: true };
+      return errorToolResult(e);
     }
     // Non-OperationError (uncaught throws) — wrap in the same shape so
     // every error response is JSON-parseable. The pre-v0.31 path emitted
     // plain `Error: ${msg}` strings here, which broke any caller that
     // tried JSON.parse(content).
-    const msg = e instanceof Error ? e.message : String(e);
-    return {
-      content: [{ type: 'text', text: JSON.stringify({ error: 'internal_error', message: msg }, null, 2) }],
-      isError: true,
-    };
+    return internalErrorToolResult(e);
   }
 }
