@@ -5,7 +5,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { operations } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
-import { dispatchToolCall, validateParams, buildOperationContext } from './dispatch.ts';
+import { dispatchToolCall, validateParams, buildOperationContext, listVisibleOperationsForDispatch } from './dispatch.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 
 export async function startMcpServer(engine: BrainEngine) {
@@ -18,7 +18,12 @@ export async function startMcpServer(engine: BrainEngine) {
   // the subagent tool registry (v0.15+) can call the same mapper against a
   // filtered OPERATIONS subset instead of duplicating this shape.
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: buildToolDefs(operations),
+    tools: buildToolDefs(await listVisibleOperationsForDispatch(engine, {
+      remote: true,
+      takesHoldersAllowList: ['world'],
+      sourceId: process.env.GBRAIN_SOURCE || 'default',
+      metaHook: getBrainHotMemoryMeta,
+    })),
   }));
 
   // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).

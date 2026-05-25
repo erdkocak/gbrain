@@ -764,6 +764,10 @@ function printHostedSurfaceResult(result: CompanyHostedSurfaceConfig, json: bool
     const suffix = rule.advisory_only ? ' (advisory only)' : '';
     console.log(`    - ${rule.name}${suffix}`);
   }
+  console.log('  reviewed tools:');
+  for (const rule of result.tool_gate.reviewed_tools) {
+    console.log(`    - ${rule.name}`);
+  }
   console.log('  disabled:');
   for (const surface of result.disabled_surfaces) {
     console.log(`    - ${surface}`);

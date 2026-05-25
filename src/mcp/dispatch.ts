@@ -12,8 +12,12 @@ import type { Operation, OperationContext, AuthInfo } from '../core/operations.t
 import { loadConfig } from '../core/config.ts';
 import { buildCompanyRequestContextFromOperationContext } from '../core/company-request-context.ts';
 import type { CompanyIdentityInput, CompanyRequestContext } from '../core/company-request-context.ts';
-import { enforceHostedCompanyRequestGate } from '../core/company-request-gate.ts';
+import { enforceHostedCompanyRequestGate, evaluateHostedCompanyRequestGate } from '../core/company-request-gate.ts';
 import { hostedCompanyMutatingOperationDenial } from '../core/company-write-auth.ts';
+import {
+  filterHostedCompanyOperations,
+  hostedCompanyToolAccessDenial,
+} from '../core/company-hosted-tool-gate.ts';
 
 export interface ToolResult {
   content: { type: 'text'; text: string }[];
@@ -226,6 +230,39 @@ export function buildOperationContext(
   };
 }
 
+async function attachCompanyRequestContext(
+  ctx: OperationContext,
+  params: Record<string, unknown>,
+  opts: DispatchOpts,
+): Promise<void> {
+  if (opts.companyRequestContext) {
+    ctx.companyRequestContext = opts.companyRequestContext;
+    return;
+  }
+  const companyRequestContext = await buildCompanyRequestContextFromOperationContext(ctx, params, {
+    requestId: opts.requestId,
+    sessionId: opts.sessionId,
+    identity: opts.companyIdentity,
+  });
+  if (companyRequestContext) ctx.companyRequestContext = companyRequestContext;
+}
+
+export async function listVisibleOperationsForDispatch(
+  engine: BrainEngine,
+  opts: DispatchOpts = {},
+): Promise<Operation[]> {
+  const remote = opts.remote ?? true;
+  const visible = remote
+    ? operations.filter((op) => !op.localOnly)
+    : operations;
+  const ctx = buildOperationContext(engine, {}, opts);
+  await attachCompanyRequestContext(ctx, {}, opts);
+  const requestGate = await evaluateHostedCompanyRequestGate(ctx, {});
+  if (!requestGate.gated) return visible;
+  if (!requestGate.allowed) return [];
+  return filterHostedCompanyOperations(ctx, visible);
+}
+
 /**
  * Resolve operation, validate params, build context, invoke handler, format result.
  *
@@ -268,22 +305,17 @@ export async function dispatchToolCall(
   }
 
   const ctx = buildOperationContext(engine, safeParams, opts);
-  if (opts.companyRequestContext) {
-    ctx.companyRequestContext = opts.companyRequestContext;
-  } else {
-    const companyRequestContext = await buildCompanyRequestContextFromOperationContext(ctx, safeParams, {
-      requestId: opts.requestId,
-      sessionId: opts.sessionId,
-      identity: opts.companyIdentity,
-    });
-    if (companyRequestContext) ctx.companyRequestContext = companyRequestContext;
-  }
+  await attachCompanyRequestContext(ctx, safeParams, opts);
 
   try {
     await enforceHostedCompanyRequestGate(ctx, safeParams);
     const writeDenial = hostedCompanyMutatingOperationDenial(ctx, { name, mutating: op.mutating });
     if (writeDenial) {
       throw new OperationError('permission_denied', writeDenial);
+    }
+    const toolDenial = await hostedCompanyToolAccessDenial(ctx, op);
+    if (toolDenial) {
+      throw new OperationError('permission_denied', toolDenial);
     }
     const result = await op.handler(ctx, safeParams);
     const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };

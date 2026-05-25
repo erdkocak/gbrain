@@ -169,7 +169,7 @@ export interface GBrainConfig {
   schema_pack?: string;
 
   /**
-   * Stage 1 company-brain pilot marker. This is a trusted-workspace product
+   * Company-brain trusted-workspace pilot marker. This is a product
    * mode only: it reserves future policy metadata names but does not enforce
    * ACLs, RLS, or secure multi-user behavior.
    */
@@ -468,6 +468,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'company.hosted_surface.skill_gate',
   'company.hosted_surface.allowlist',
   'company.hosted_surface.advisory_only',
+  'company.hosted_surface.tool_gate',
   'company.hosted_surface.disabled_surfaces',
   'company.policy',
   'company.policy.seed',

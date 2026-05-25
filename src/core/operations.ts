@@ -2645,7 +2645,6 @@ const get_job: Operation = {
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
   },
-  mutating: true,
   scope: 'admin',
   handler: async (ctx, p) => {
     const { MinionQueue } = await import('./minions/queue.ts');
@@ -2720,7 +2719,6 @@ const get_job_progress: Operation = {
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
   },
-  mutating: true,
   scope: 'admin',
   handler: async (ctx, p) => {
     const { MinionQueue } = await import('./minions/queue.ts');
@@ -2737,6 +2735,7 @@ const pause_job: Operation = {
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
   },
+  mutating: true,
   scope: 'admin',
   handler: async (ctx, p) => {
     const { MinionQueue } = await import('./minions/queue.ts');
@@ -2753,6 +2752,7 @@ const resume_job: Operation = {
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
   },
+  mutating: true,
   scope: 'admin',
   handler: async (ctx, p) => {
     const { MinionQueue } = await import('./minions/queue.ts');
