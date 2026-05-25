@@ -287,6 +287,66 @@ CREATE INDEX IF NOT EXISTS idx_ingest_log_source_type_created
   ON ingest_log (source_id, source_type, created_at DESC);
 
 -- ============================================================
+-- company_audit_events: hosted company permission audit substrate
+-- ============================================================
+CREATE TABLE IF NOT EXISTS company_audit_chain_state (
+  chain_id        TEXT PRIMARY KEY,
+  last_event_hash TEXT,
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO company_audit_chain_state (chain_id, last_event_hash)
+  VALUES ('hosted_company', NULL)
+  ON CONFLICT (chain_id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS company_audit_events (
+  sequence_id                 BIGSERIAL UNIQUE,
+  event_id                    TEXT PRIMARY KEY,
+  schema_version              INTEGER NOT NULL DEFAULT 1 CHECK (schema_version = 1),
+  event_type                  TEXT    NOT NULL CHECK (event_type IN (
+    'company.hosted.tool_list',
+    'company.hosted.tool_call',
+    'company.hosted.policy_decision',
+    'company.hosted.read_result',
+    'company.hosted.write_result',
+    'company.hosted.derived_write',
+    'company.hosted.denial'
+  )),
+  event_timestamp             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  request_id                  TEXT    NOT NULL,
+  session_id                  TEXT,
+  user_id                     TEXT,
+  client_id                   TEXT,
+  client_name                 TEXT,
+  transport                   TEXT    NOT NULL,
+  operation                   TEXT,
+  source_scope                JSONB   NOT NULL DEFAULT '{}'::jsonb,
+  policy_decision_id          TEXT,
+  policy_version              TEXT,
+  policy_hash                 TEXT,
+  readable_policy_ids_hash    TEXT,
+  writable_policy_ids_hash    TEXT,
+  args_hash                   TEXT,
+  content_or_query_hash       TEXT,
+  result_count                INTEGER CHECK (result_count IS NULL OR result_count >= 0),
+  object_ids_or_slugs         JSONB   NOT NULL DEFAULT '[]'::jsonb,
+  status                      TEXT    NOT NULL CHECK (status IN ('attempted', 'succeeded', 'denied', 'failed')),
+  denial_reason               TEXT,
+  previous_event_hash         TEXT,
+  event_hash                  TEXT    NOT NULL UNIQUE,
+  created_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_company_audit_events_timestamp
+  ON company_audit_events (event_timestamp, sequence_id);
+CREATE INDEX IF NOT EXISTS idx_company_audit_events_request
+  ON company_audit_events (request_id);
+CREATE INDEX IF NOT EXISTS idx_company_audit_events_user_timestamp
+  ON company_audit_events (user_id, event_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_company_audit_events_policy_hash
+  ON company_audit_events (policy_hash);
+
+-- ============================================================
 -- config: brain-level settings
 -- ============================================================
 CREATE TABLE IF NOT EXISTS config (
