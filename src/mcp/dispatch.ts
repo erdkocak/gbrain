@@ -25,11 +25,16 @@ import {
 } from '../core/company-hosted-tool-gate.ts';
 import {
   appendCompanyAuditEvent,
+  type CompanyAuditObjectRef,
   type CompanyAuditEventInput,
   type CompanyAuditEventType,
   type CompanyAuditStatus,
 } from '../core/company-audit.ts';
 import { isValidSourceId } from '../core/source-id.ts';
+import {
+  buildHostedCompanyReadResultAudit,
+  shouldAuditHostedCompanyReadResult,
+} from './company-read-audit.ts';
 
 type CompanyAuditAppender = typeof appendCompanyAuditEvent;
 
@@ -262,8 +267,9 @@ interface DispatchAuditEvent {
   operation: string;
   status: CompanyAuditStatus;
   args?: unknown;
+  content_or_query?: unknown;
   result_count?: number | null;
-  object_ids_or_slugs?: readonly (string | number)[];
+  object_ids_or_slugs?: readonly CompanyAuditObjectRef[];
   denial_reason?: string | null;
 }
 
@@ -297,6 +303,9 @@ async function appendHostedCompanyAuditEvent(
   };
   if (Object.prototype.hasOwnProperty.call(event, 'args')) {
     input.args = event.args;
+  }
+  if (Object.prototype.hasOwnProperty.call(event, 'content_or_query')) {
+    input.content_or_query = event.content_or_query;
   }
 
   try {
@@ -662,6 +671,18 @@ export async function dispatchToolCall(
       }
     }
     if (auditRequired && !op.mutating) {
+      if (shouldAuditHostedCompanyReadResult(op)) {
+        const readAudit = buildHostedCompanyReadResultAudit(name, safeParams, result);
+        const auditFailure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, safeParams, auditRequestId, {
+          event_type: 'company.hosted.read_result',
+          operation: name,
+          status: 'succeeded',
+          ...(readAudit.content_or_query !== undefined ? { content_or_query: readAudit.content_or_query } : {}),
+          result_count: readAudit.result_count,
+          object_ids_or_slugs: readAudit.object_ids_or_slugs,
+        });
+        if (auditFailure) return auditFailure;
+      }
       const auditFailure = await appendHostedCompanyAuditOrFailClosed(ctx, opts, safeParams, auditRequestId, {
         event_type: 'company.hosted.tool_call',
         operation: name,

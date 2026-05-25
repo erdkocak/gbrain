@@ -104,13 +104,22 @@ async function seedReadablePage(): Promise<void> {
   }, { sourceId: 'company' });
 }
 
-async function auditRows(operation?: string): Promise<any[]> {
-  const where = operation ? `WHERE operation = $1` : '';
-  const params = operation ? [operation] : [];
+async function auditRows(operation?: string, eventType?: string): Promise<any[]> {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (operation) {
+    params.push(operation);
+    clauses.push(`operation = $${params.length}`);
+  }
+  if (eventType) {
+    params.push(eventType);
+    clauses.push(`event_type = $${params.length}`);
+  }
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
   return engine.executeRaw(
     `SELECT sequence_id, event_type, request_id, session_id, user_id, client_id, client_name,
             transport, operation, source_scope, policy_decision_id, policy_version, policy_hash,
-            readable_policy_ids_hash, writable_policy_ids_hash, args_hash, result_count,
+            readable_policy_ids_hash, writable_policy_ids_hash, args_hash, content_or_query_hash, result_count,
             object_ids_or_slugs, status, denial_reason
        FROM company_audit_events
        ${where}
@@ -185,7 +194,7 @@ describe('hosted company dispatch audit', () => {
     expect(result.isError).toBeUndefined();
     expect(parseToolJson(result).slug).toBe(READABLE_SLUG);
 
-    const rows = await auditRows('get_page');
+    const rows = await auditRows('get_page', 'company.hosted.tool_call');
     expect(rows.map((row) => row.status)).toEqual(['attempted', 'succeeded']);
     for (const row of rows) {
       expect(row.event_type).toBe('company.hosted.tool_call');
@@ -213,7 +222,7 @@ describe('hosted company dispatch audit', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    const rows = await auditRows('get_page');
+    const rows = await auditRows('get_page', 'company.hosted.tool_call');
     expect(rows.map((row) => row.session_id)).toEqual([null, null]);
     expect(JSON.stringify(rows)).not.toContain(rawSessionId);
   });
@@ -365,7 +374,7 @@ describe('hosted company dispatch audit', () => {
     expect(JSON.stringify(rows)).not.toContain('invalid_params');
   });
 
-  test('records only the pre-handler control-plane attempt for hosted writes in this substage', async () => {
+  test('records only the pre-handler control-plane attempt for hosted writes', async () => {
     const appendCalls: string[] = [];
     const auditAppend = async (...args: Parameters<typeof appendCompanyAuditEvent>) => {
       appendCalls.push(`${args[1].operation}:${args[1].status}`);
