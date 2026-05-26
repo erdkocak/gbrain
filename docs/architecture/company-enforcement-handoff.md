@@ -3,7 +3,7 @@
 Company policy is representable, resolvable, inspectable, attached to company-mode
 objects, and enforced on the reviewed hosted MCP operation path. This handoff
 records the enforcement design and the remaining boundaries that are still not
-claimed. For current product wording, residual risks, and audit-hardening fields,
+claimed. For current product wording, residual risks, and auditability fields,
 see `docs/architecture/company-permission-status.md`.
 
 Use `gbrain company enforcement-handoff --json` for the machine-readable version of this handoff.
@@ -52,7 +52,7 @@ The reviewed hosted operation path uses these hooks in this order:
 5. Disable company secure cache, then add policy-safe cache keys before re-enabling.
 6. Enforce graph seed/frontier/endpoint readability.
 7. Keep broad hosted skills denied until each skill is explicitly routed through policy enforcement.
-8. Add durable audit after enforcement decisions exist.
+8. Keep hosted audit coverage aligned with reviewed operation boundaries.
 
 ## Residual Risks
 
@@ -62,4 +62,7 @@ Related tables such as `content_chunks`, `links`, `timeline_entries`, `facts`, `
 
 External model payloads are enforcement boundaries. Reranker, expansion, extraction, and synthesis prompts must receive only readable text.
 
-Audit hardening should make hosted reads, writes, derivations, and policy decisions reconstructable after permission-enforcement decisions exist.
+Hosted audit rows make reviewed hosted reads, writes, derivations, and policy
+decisions reconstructable at the application layer. Signed checkpoints,
+DB-level immutability, hosted audit-read MCP exposure, and live OAuth/Postgres
+parity remain outside this handoff.

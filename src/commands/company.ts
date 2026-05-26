@@ -85,14 +85,16 @@ it does not send email, post messages, create tickets, run webhooks, invoke
 subagents, or execute external actions. Hosted skill exposure is deny-by-
 default for trusted pilot clients only. Company policies are represented and
 resolvable for local/admin inspection. Reviewed hosted MCP operations enforce
-application-layer permissions for resolved company users, but this is not
-database-level ACL/RLS or durable audit.
+application-layer permissions for resolved company users and write
+hash-chained hosted audit rows for reviewed operations, but this is not
+database-level ACL/RLS, signed checkpointing, direct-DB protection, or live
+OAuth/Postgres parity.
 The enforcement handoff command prints permission-enforcement hook order and residual risks;
 it is a plan, not an authorization gate.
 The permission-status command prints the narrow reviewed hosted MCP permission claim,
-residual risks, and audit-hardening handoff.
+residual risks, and hosted auditability matrix.
 Audit inspection is limited to local/operator or configured audit-reader use;
-hash verification checks the append chain but is not an enterprise audit claim.
+hash verification checks the application append chain but is not an enterprise audit claim.
 These commands do not start live integrations, cron, webhooks, background
 connectors, broad hosted write access, policy-safe query cache reuse,
 hot-memory, analytics reads, or dream-cycle outputs.
@@ -929,7 +931,7 @@ function printHostedSurfaceResult(result: CompanyHostedSurfaceConfig, json: bool
   for (const surface of result.disabled_surfaces) {
     console.log(`    - ${surface}`);
   }
-  console.log('  note: reviewed hosted tools use application-layer permissions; direct DB credentials, durable audit, broad tools, and external execution remain unavailable');
+  console.log('  note: reviewed hosted tools use application-layer permissions and hash-chained audit rows; direct DB credentials, broad tools, and external execution remain unavailable');
 }
 
 function printPolicySeedInspection(result: CompanyPolicySeedInspection, json: boolean): void {
@@ -1030,6 +1032,11 @@ function printPermissionStatus(result: CompanyPermissionStatus, json: boolean): 
   console.log('Supported claims:');
   for (const claim of result.supported_claims) {
     console.log(`  - ${claim.id}: ${claim.status}`);
+  }
+  console.log('');
+  console.log(`Auditability: ${result.auditability.status}`);
+  for (const item of result.auditability.matrix) {
+    console.log(`  - ${item.id}: ${item.event_types.join(', ')}`);
   }
   console.log('');
   console.log('Not claimed:');

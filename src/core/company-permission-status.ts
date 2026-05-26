@@ -49,6 +49,26 @@ export interface CompanyAuditHandoff {
   };
 }
 
+export interface CompanyAuditMatrixEntry {
+  id: string;
+  coverage: string;
+  event_types: string[];
+  failure_mode: string;
+  evidence: string[];
+}
+
+export interface CompanyAuditabilityStatus {
+  status: 'narrow_hosted_application_audit_supported';
+  claim: string;
+  matrix: CompanyAuditMatrixEntry[];
+  verification: {
+    hash_chain: 'application_hash_chain';
+    audit_reads: 'local_admin_and_configured_reader_filtered';
+    required_append_failure: 'fail_closed_except_named_support_tools';
+  };
+  limitations: string[];
+}
+
 export interface CompanyPermissionStatus {
   schema_version: 1;
   kind: typeof COMPANY_PERMISSION_STATUS_KIND;
@@ -63,6 +83,7 @@ export interface CompanyPermissionStatus {
   supported_claims: CompanyPermissionClaim[];
   unsupported_claims: CompanyUnsupportedClaim[];
   residual_risks: CompanyPermissionResidualRisk[];
+  auditability: CompanyAuditabilityStatus;
   audit_handoff: CompanyAuditHandoff;
   public_wording: {
     allowed: string[];
@@ -84,13 +105,17 @@ export function buildCompanyPermissionStatus(): CompanyPermissionStatus {
         'normal users reach company memory only through hosted MCP operations',
         'company request context resolves one active user and current policy metadata',
         'tools are selected from the reviewed hosted company tool gate',
+        'company audit migrations are applied and hosted audit append is available',
         'direct database credentials stay admin/development only',
       ],
       out_of_scope: [
         'database-level ACL or RLS enforcement',
-        'durable append-only policy audit',
+        'enterprise audit guarantees such as signed checkpoints, DB-level immutability, or external audit export',
+        'hosted MCP audit-log read tools',
+        'complete non-admin audit-reader visibility for opaque numeric object refs',
         'policy-safe query cache reuse',
         'broad hosted skills, external execution, or external research/model egress',
+        'live OAuth/Postgres deployment parity',
       ],
     },
     supported_claims: [
@@ -146,6 +171,20 @@ export function buildCompanyPermissionStatus(): CompanyPermissionStatus {
           'test/company-permission-regression.test.ts',
         ],
       },
+      {
+        id: 'hosted-application-auditability',
+        status: 'supported',
+        claim:
+          'Reviewed hosted company operations write hash-chained audit rows for tool listing, tool calls, denials, read results, reviewed writes, and derived-write decisions; required audit append failures fail closed except for the named support tool.',
+        evidence: [
+          'test/company-audit.test.ts',
+          'test/company-audit-dispatch.test.ts',
+          'test/company-audit-read-result.test.ts',
+          'test/company-audit-write-result.test.ts',
+          'test/company-audit-read-access.test.ts',
+          'test/company-audit-claim-gate.test.ts',
+        ],
+      },
     ],
     unsupported_claims: [
       {
@@ -155,10 +194,16 @@ export function buildCompanyPermissionStatus(): CompanyPermissionStatus {
         requirement: 'Add matching database-level ACL/RLS before issuing direct database credentials to normal users.',
       },
       {
-        id: 'durable-audit',
+        id: 'enterprise-audit-guarantees',
         status: 'not_claimed',
-        reason: 'Request and policy decisions are not yet stored in an append-only audit log.',
-        requirement: 'Add durable audit rows with hash chaining and permissioned audit-log reads.',
+        reason: 'The hosted audit log is application-layer, hash-chained storage, not DB-level immutability, signed checkpointing, or external compliance export.',
+        requirement: 'Add DB-level immutability controls, signed checkpoints, export/reconciliation workflows, and deployment procedures before making enterprise audit claims.',
+      },
+      {
+        id: 'hosted-audit-read-mcp',
+        status: 'not_claimed',
+        reason: 'Audit reads are exposed through local/operator helpers and CLI paths, not a reviewed hosted MCP audit-read tool.',
+        requirement: 'Review and allowlist a hosted audit-read tool separately, including reader authorization, output redaction, and side-channel tests.',
       },
       {
         id: 'policy-safe-cache-reuse',
@@ -188,11 +233,25 @@ export function buildCompanyPermissionStatus(): CompanyPermissionStatus {
         requirement: 'Keep that boundary, or add DB-level enforcement that matches application policy.',
       },
       {
-        id: 'durable-audit-deferred',
+        id: 'audit-signed-checkpoints-deferred',
         owner: 'audit_hardening',
-        risk: 'A hosted read, write, or denial cannot yet be reconstructed from append-only policy audit rows.',
-        current_control: 'Request-context policy decision ids are attached to in-process decisions and hosted writes.',
-        requirement: 'Persist append-only audit events for hosted tool lists, calls, denials, reads, writes, and derived writes.',
+        risk: 'Application hash-chain verification detects ordinary row edits or missing rows, but a privileged actor could rewrite all rows and chain state consistently.',
+        current_control: 'Hosted company events are stored in a hash chain and can be verified locally.',
+        requirement: 'Add signed checkpoints or external anchoring before claiming tamper-proof audit durability.',
+      },
+      {
+        id: 'audit-reader-opaque-numeric-refs',
+        owner: 'audit_hardening',
+        risk: 'Audit rows with untyped numeric object refs cannot be shown precisely to non-admin audit readers without risking hidden-id leakage.',
+        current_control: 'Permissioned non-admin audit reads fail closed for numeric-ref rows; trusted local admins can inspect all rows.',
+        requirement: 'Store type-aware object refs end to end before claiming complete permissioned audit-reader visibility.',
+      },
+      {
+        id: 'hosted-audit-read-tool-unexposed',
+        owner: 'audit_hardening',
+        risk: 'Normal hosted users cannot inspect audit logs through MCP.',
+        current_control: 'Audit reads are local/operator or configured-reader helper/CLI flows only.',
+        requirement: 'Add a separately reviewed hosted audit-read operation before exposing audit reads over MCP.',
       },
       {
         id: 'cache-reenable-deferred',
@@ -209,20 +268,109 @@ export function buildCompanyPermissionStatus(): CompanyPermissionStatus {
         requirement: 'Backfill or classify legacy company objects before relying on hosted reads for them.',
       },
       {
-        id: 'external-and-analytics-surfaces-disabled',
+        id: 'broad-hosted-tools-disabled',
         owner: 'permission_enforcement',
-        risk: 'Disabled analytics, maintenance, external egress, and job/subagent surfaces are not covered by the narrow claim.',
+        risk: 'Analytics, maintenance, publishing, and broad hosted tools are not covered by the narrow claim.',
         current_control: 'Hosted company tool listing and direct-call gates deny those surfaces.',
         requirement: 'Keep denied until each surface has policy filters and audit coverage.',
       },
       {
-        id: 'oauth-postgres-e2e',
+        id: 'external-execution-disabled',
+        owner: 'permission_enforcement',
+        risk: 'Email, chat, ticket, webhook, shell, job, subagent, and external-research execution could create unaudited or policy-unsafe side effects if enabled broadly.',
+        current_control: 'Hosted company surface denies external execution and follow-up remains draft-only.',
+        requirement: 'Review each external execution path against authorization, audit, egress, and user-confirmation requirements before enabling.',
+      },
+      {
+        id: 'live-oauth-postgres-parity',
         owner: 'integration_verification',
         risk: 'Connector, OAuth, and Postgres deployment wiring can drift from PGLite dispatch behavior.',
         current_control: 'Shared dispatch and SQL parity are covered by unit/integration tests where available.',
         requirement: 'Run live hosted OAuth MCP and Postgres checks in the target deployment environment.',
       },
     ],
+    auditability: {
+      status: 'narrow_hosted_application_audit_supported',
+      claim:
+        'Reviewed hosted company operations produce application-layer, hash-chained audit rows for control-plane decisions, read results, reviewed writes, derived-write decisions, and denials.',
+      matrix: [
+        {
+          id: 'tool-list',
+          coverage: 'Hosted tool listing records caller, source scope, policy metadata, reviewed tool ids, and result count.',
+          event_types: ['company.hosted.tool_list'],
+          failure_mode: 'required append failure returns an empty hosted tool list',
+          evidence: ['test/company-audit-dispatch.test.ts', 'test/company-audit-claim-gate.test.ts'],
+        },
+        {
+          id: 'allowed-tool-call',
+          coverage: 'Allowed hosted calls record attempted and final tool-call rows without raw args.',
+          event_types: ['company.hosted.tool_call'],
+          failure_mode: 'required append failure denies the hosted call',
+          evidence: ['test/company-audit-dispatch.test.ts', 'test/company-audit-claim-gate.test.ts'],
+        },
+        {
+          id: 'denied-tool-call',
+          coverage: 'Request-gate, stale-policy, local-only, write-gate, hosted-tool-gate, and unknown-tool denials record redacted denial rows.',
+          event_types: ['company.hosted.denial'],
+          failure_mode: 'required denial append failure denies the hosted call with the audit failure message',
+          evidence: ['test/company-audit-dispatch.test.ts', 'test/company-request-gate.test.ts', 'test/company-audit-claim-gate.test.ts'],
+        },
+        {
+          id: 'direct-read-results',
+          coverage: 'Direct hosted reads record post-filtered result count and object refs without raw page bodies or hidden refs.',
+          event_types: ['company.hosted.read_result'],
+          failure_mode: 'read-result append failure denies the hosted read before returning content',
+          evidence: ['test/company-audit-read-result.test.ts', 'test/company-audit-claim-gate.test.ts'],
+        },
+        {
+          id: 'retrieval-results',
+          coverage: 'Hosted retrieval records post-filtered result count, object refs, and query hash only.',
+          event_types: ['company.hosted.read_result'],
+          failure_mode: 'read-result append failure denies the hosted retrieval before returning content',
+          evidence: ['test/company-audit-read-result.test.ts', 'test/company-audit-claim-gate.test.ts'],
+        },
+        {
+          id: 'graph-code-traversal',
+          coverage: 'Hosted graph, link, and code traversal audit records post-filtered ids/slugs without snippets or symbol payloads.',
+          event_types: ['company.hosted.read_result'],
+          failure_mode: 'read-result append failure denies the hosted traversal before returning content',
+          evidence: ['test/company-audit-read-result.test.ts', 'test/company-audit-claim-gate.test.ts'],
+        },
+        {
+          id: 'writes',
+          coverage: 'Reviewed hosted writes record attempted, denied, and successful write-result rows with content hashes and target refs.',
+          event_types: ['company.hosted.write_result'],
+          failure_mode: 'required pre-commit or success append failure prevents committed writes',
+          evidence: ['test/company-audit-write-result.test.ts', 'test/company-audit-claim-gate.test.ts'],
+        },
+        {
+          id: 'derived-writes',
+          coverage: 'Derived visibility decisions record inherited, intersected, and rejected derived-write rows without raw content.',
+          event_types: ['company.hosted.derived_write'],
+          failure_mode: 'derived-write status follows enclosing write completion',
+          evidence: ['test/company-audit-write-result.test.ts', 'test/company-audit-claim-gate.test.ts'],
+        },
+        {
+          id: 'audit-read-and-verify',
+          coverage: 'Local/operator and configured-reader audit inspection redacts raw payloads and denial details; verification checks row hashes and chain continuity.',
+          event_types: ['company_audit_read', 'company_audit_verification'],
+          failure_mode: 'non-admin audit reads fail closed for opaque numeric refs',
+          evidence: ['test/company-audit-read-access.test.ts'],
+        },
+      ],
+      verification: {
+        hash_chain: 'application_hash_chain',
+        audit_reads: 'local_admin_and_configured_reader_filtered',
+        required_append_failure: 'fail_closed_except_named_support_tools',
+      },
+      limitations: [
+        'not database-level ACL/RLS or direct-SQL protection',
+        'not signed checkpointing, external anchoring, or enterprise audit export',
+        'not live OAuth/Postgres deployment parity',
+        'not hosted MCP audit-read exposure',
+        'not complete non-admin visibility for opaque numeric audit refs',
+      ],
+    },
     audit_handoff: {
       schema_version: 1,
       event_types: [
@@ -290,13 +438,17 @@ export function buildCompanyPermissionStatus(): CompanyPermissionStatus {
     public_wording: {
       allowed: [
         'Reviewed hosted MCP operations enforce application-layer company permissions for resolved users.',
+        'Reviewed hosted company operations write application-layer, hash-chained audit rows for tool listing, calls, denials, read results, reviewed writes, and derived-write decisions.',
+        'Required hosted audit append failures fail closed except for the named support tool that returns no brain object content.',
+        'Local/operator audit reads and configured audit-reader previews exclude raw args, body, query, prompt, and file payloads.',
         'Normal users should use hosted MCP; direct database credentials remain admin/development only.',
         'Policy-scoped hosted retrieval keeps semantic query cache disabled.',
       ],
       not_allowed: [
         'Do not claim database-level ACL/RLS enforcement.',
-        'Do not claim durable append-only audit until audit hardening lands.',
-        'Do not claim broad hosted skills, external execution, analytics aggregates, or policy-safe cache reuse.',
+        'Do not claim enterprise audit guarantees, DB-level immutability, signed checkpoints, or external audit export.',
+        'Do not claim complete non-admin audit-reader visibility for opaque numeric object refs.',
+        'Do not claim hosted audit-read MCP exposure, broad hosted skills, external execution, analytics aggregates, policy-safe cache reuse, or live OAuth/Postgres parity.',
       ],
     },
   };

@@ -275,14 +275,14 @@ export function buildCompanyEnforcementHandoff(): CompanyEnforcementHandoff {
       {
         id: 'audit-envelope',
         priority: 'p2',
-        surface: 'durable audit',
+        surface: 'hosted auditability',
         files: [
           'src/core/operations.ts',
           'src/core/migrate.ts',
           'src/core/company-request-context.ts',
         ],
         action:
-          'After enforcement hooks exist, add append-only audit rows with request id, user id, source scope, policy decision id, policy version/hash, target object policy, operation, and result counts.',
+          'Keep hosted audit rows aligned with request id, user id, source scope, policy decision id, policy version/hash, target object policy, operation, result counts, and object refs.',
         blocks_secure_claim_until_done: false,
       },
     ],
@@ -318,9 +318,9 @@ export function buildCompanyEnforcementHandoff(): CompanyEnforcementHandoff {
       {
         id: 'audit-reconstruction',
         owner: 'audit_hardening',
-        risk: 'Request-context ids are inspectable but not durably sufficient to reconstruct every hosted read/write/derivation.',
+        risk: 'Application audit rows are reconstructable, but signed checkpoints, hosted audit-read MCP exposure, and live deployment parity remain separate work.',
         requirement:
-          'Audit hardening must add append-only audit rows after permission-enforcement decisions exist.',
+          'Use the permission-status auditability matrix for the current claim and keep future audit expansion separately reviewed.',
       },
     ],
     secure_claim_blockers: [
