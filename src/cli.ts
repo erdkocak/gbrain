@@ -1680,6 +1680,7 @@ IMPORT/EXPORT
   company follow-up draft            Draft-only follow-up; no sending
   company hosted-surface             Deny-by-default trusted pilot skill surface
   company policy seed|grants|context Local/admin policy inspection
+  company audit read|verify          Permissioned audit inspection and hash-chain check
   company enforcement-handoff        Permission-enforcement hook plan
   company permission-status          Reviewed hosted MCP permission status
   sync [--repo <path>] [flags]       Git-to-brain incremental sync

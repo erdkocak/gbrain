@@ -50,6 +50,13 @@ import {
   buildCompanyPermissionStatus,
   type CompanyPermissionStatus,
 } from '../core/company-permission-status.ts';
+import {
+  CompanyAuditReadError,
+  readCompanyAuditLog,
+  verifyCompanyAuditHashChain,
+  type CompanyAuditReadResult,
+  type CompanyAuditVerificationResult,
+} from '../core/company-audit-read.ts';
 import { isAvailable } from '../core/ai/gateway.ts';
 
 const HELP = `Usage:
@@ -64,6 +71,8 @@ const HELP = `Usage:
   gbrain company policy seed [options]
   gbrain company policy grants <user-id> [options]
   gbrain company policy context [identity options]
+  gbrain company audit read [identity options] [--limit N] [--json]
+  gbrain company audit verify [--json]
   gbrain company enforcement-handoff [options]
   gbrain company permission-status [options]
 
@@ -82,6 +91,8 @@ The enforcement handoff command prints permission-enforcement hook order and res
 it is a plan, not an authorization gate.
 The permission-status command prints the narrow reviewed hosted MCP permission claim,
 residual risks, and audit-hardening handoff.
+Audit inspection is limited to local/operator or configured audit-reader use;
+hash verification checks the append chain but is not an enterprise audit claim.
 These commands do not start live integrations, cron, webhooks, background
 connectors, broad hosted write access, policy-safe query cache reuse,
 hot-memory, analytics reads, or dream-cycle outputs.
@@ -125,6 +136,10 @@ Policy inspection options:
   --session-id ID        Include a preview session id
   --allowed-source ID    Repeatable; comma-separated values also accepted
 
+Audit options:
+  --limit N              Max audit rows to return (1-200, default: 50)
+  --local-admin          Inspect as trusted local operator
+
 Common options:
   --source-id ID         Override company primary source (default: company)
   --json                 JSON receipt/result
@@ -152,9 +167,17 @@ type Parsed =
   | ({ kind: 'policy-seed'; sourceId: string | undefined; json: boolean })
   | ({ kind: 'policy-grants'; userId: string; sourceId: string | undefined; json: boolean })
   | ({ kind: 'policy-context'; input: CompanyRequestContextPreviewInput; json: boolean })
+  | ({ kind: 'audit-read'; input: CompanyAuditReadCliInput; json: boolean })
+  | ({ kind: 'audit-verify'; json: boolean })
   | ({ kind: 'enforcement-handoff'; json: boolean })
   | ({ kind: 'permission-status'; json: boolean })
   | { help: true };
+
+interface CompanyAuditReadCliInput {
+  context: CompanyRequestContextPreviewInput;
+  trustedLocalAdmin: boolean;
+  limit: number;
+}
 
 export async function runCompany(engine: BrainEngine | null, args: string[]): Promise<void> {
   const parsed = parseArgs(args);
@@ -203,11 +226,28 @@ export async function runCompany(engine: BrainEngine | null, args: string[]): Pr
     } else if (parsed.kind === 'policy-grants') {
       const result = await inspectCompanyPolicyGrants(engine, { userId: parsed.userId, sourceId: parsed.sourceId });
       printPolicyGrantInspection(result, parsed.json);
-    } else {
+    } else if (parsed.kind === 'policy-context') {
       const result = await previewCompanyPolicyRequestContext(engine, parsed.input);
       printPolicyContextPreview(result, parsed.json);
+    } else if (parsed.kind === 'audit-read') {
+      const context = parsed.input.trustedLocalAdmin
+        ? undefined
+        : (await previewCompanyPolicyRequestContext(engine, parsed.input.context)).request_context;
+      const result = await readCompanyAuditLog(engine, {
+        requestContext: context,
+        trustedLocalAdmin: parsed.input.trustedLocalAdmin,
+        limit: parsed.input.limit,
+      });
+      printAuditReadResult(result, parsed.json);
+    } else {
+      const result = await verifyCompanyAuditHashChain(engine);
+      printAuditVerificationResult(result, parsed.json);
     }
   } catch (e) {
+    if (e instanceof CompanyAuditReadError) {
+      console.error(`gbrain company: ${e.message}`);
+      process.exit(1);
+    }
     if (e instanceof CompanyPolicyInspectError) {
       console.error(`gbrain company: ${e.message}`);
       console.error(`gbrain company: ${COMPANY_POLICY_INSPECTION_GUARDRAIL}`);
@@ -258,6 +298,9 @@ function parseArgs(args: string[]): Parsed {
   if (group === 'policy' || group === 'policies') {
     return parsePolicy([subcommand, ...rest].filter((v): v is string => typeof v === 'string'));
   }
+  if (group === 'audit') {
+    return parseAudit([subcommand, ...rest].filter((v): v is string => typeof v === 'string'));
+  }
   if (
     group === 'enforcement-handoff'
     || group === 'handoff'
@@ -288,7 +331,7 @@ function parseArgs(args: string[]): Parsed {
   }
 
   if (group !== 'ingest' || (subcommand !== 'meeting' && subcommand !== 'doc')) {
-    console.error('Usage: gbrain company <ingest|extract|query|decisions|follow-up|hosted-surface|policy|enforcement-handoff|permission-status> ...');
+    console.error('Usage: gbrain company <ingest|extract|query|decisions|follow-up|hosted-surface|policy|audit|enforcement-handoff|permission-status> ...');
     console.error('Run `gbrain company --help` for details.');
     process.exit(2);
   }
@@ -615,6 +658,92 @@ function parsePolicy(args: string[]): Parsed {
   process.exit(2);
 }
 
+function parseAudit(args: string[]): Parsed {
+  const action = args[0];
+  const commandArgs = args.slice(1);
+  if (action === 'verify' || action === 'check') {
+    let json = false;
+    for (const arg of commandArgs) {
+      if (arg === '--json') { json = true; continue; }
+      if (arg.startsWith('--')) unknownFlag(arg);
+      console.error('Usage: gbrain company audit verify [--json]');
+      process.exit(2);
+    }
+    return { kind: 'audit-verify', json };
+  }
+
+  if (action !== 'read' && action !== 'list' && action !== 'log') {
+    console.error('Usage: gbrain company audit <read|verify> ...');
+    process.exit(2);
+  }
+
+  const base = parsePolicyBase(commandArgs);
+  const positional: string[] = [];
+  const allowedSources: string[] = [];
+  let requestId: string | undefined;
+  let sessionId: string | undefined;
+  let remote = true;
+  let trustedLocalAdmin = false;
+  let explicitReaderContext = false;
+  let limit = 50;
+  const identity: CompanyRequestContextPreviewInput['identity'] = {};
+
+  for (let i = 0; i < commandArgs.length; i++) {
+    const a = commandArgs[i]!;
+    const consumed = consumePolicyBaseFlag(commandArgs, i);
+    if (consumed !== null) { i += consumed; continue; }
+    if (a === '--limit') {
+      const value = requireValue(commandArgs, ++i, a);
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isInteger(parsed) || String(parsed) !== value || parsed < 1 || parsed > 200) {
+        console.error('gbrain company: audit --limit must be an integer from 1 to 200');
+        process.exit(2);
+      }
+      limit = parsed;
+      continue;
+    }
+    if (a === '--user-id') { identity.userId = requireValue(commandArgs, ++i, a); explicitReaderContext = true; continue; }
+    if (a === '--email') { identity.email = requireValue(commandArgs, ++i, a); explicitReaderContext = true; continue; }
+    if (a === '--idp-subject') { identity.idpSubject = requireValue(commandArgs, ++i, a); explicitReaderContext = true; continue; }
+    if (a === '--client-id') { identity.clientId = requireValue(commandArgs, ++i, a); explicitReaderContext = true; continue; }
+    if (a === '--client-name') { identity.clientName = requireValue(commandArgs, ++i, a); explicitReaderContext = true; continue; }
+    if (a === '--request-id') { requestId = requireValue(commandArgs, ++i, a); explicitReaderContext = true; continue; }
+    if (a === '--session-id') { sessionId = requireValue(commandArgs, ++i, a); explicitReaderContext = true; continue; }
+    if (a === '--allowed-source' || a === '--allowed-sources') {
+      allowedSources.push(...splitList(requireValue(commandArgs, ++i, a)));
+      explicitReaderContext = true;
+      continue;
+    }
+    if (a === '--local') { remote = false; explicitReaderContext = true; continue; }
+    if (a === '--remote') { remote = true; explicitReaderContext = true; continue; }
+    if (a === '--local-admin') { trustedLocalAdmin = true; continue; }
+    if (a.startsWith('--')) unknownFlag(a);
+    positional.push(a);
+  }
+
+  if (positional.length > 0) {
+    console.error('Usage: gbrain company audit read [identity options] [--limit N] [--json]');
+    process.exit(2);
+  }
+
+  return {
+    kind: 'audit-read',
+    input: {
+      context: {
+        sourceId: base.sourceId,
+        requestId,
+        sessionId,
+        remote,
+        allowedSources: allowedSources.length > 0 ? allowedSources : undefined,
+        identity,
+      },
+      trustedLocalAdmin: trustedLocalAdmin || !explicitReaderContext,
+      limit,
+    },
+    json: base.json,
+  };
+}
+
 function parseBase(args: string[]): ParsedBase {
   const base: ParsedBase = {
     json: false,
@@ -914,6 +1043,52 @@ function printPermissionStatus(result: CompanyPermissionStatus, json: boolean): 
   }
   console.log('');
   console.log(`Audit failure mode: ${result.audit_handoff.failure_mode.default}`);
+}
+
+function printAuditReadResult(result: CompanyAuditReadResult, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log('company audit log inspection:');
+  console.log(`  mode:       ${result.access.mode}`);
+  console.log(`  user:       ${result.access.user_id ?? '(local operator)'}`);
+  console.log(`  events:     ${result.events.length}`);
+  console.log(`  filtering:  ${result.access.filtered_by_object_policy ? 'object-policy filtered' : 'local operator view'}`);
+  console.log('');
+  for (const event of result.events) {
+    const refs = event.object_ids_or_slugs.length > 0
+      ? ` refs=${event.object_ids_or_slugs.join(',')}`
+      : '';
+    const denial = event.denial_reason_redacted
+      ? ' denial=(redacted)'
+      : event.denial_reason
+        ? ` denial=${event.denial_reason}`
+        : '';
+    console.log(`  - #${event.sequence_id} ${event.timestamp} ${event.event_type} ${event.operation ?? '(none)'} ${event.status} count=${event.result_count ?? 0}${refs}${denial}`);
+  }
+  console.log('');
+  console.log('note: raw args, body, query, and prompt payloads are not included in audit output');
+}
+
+function printAuditVerificationResult(result: CompanyAuditVerificationResult, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  console.log('company audit hash-chain verification:');
+  console.log(`  valid:      ${result.valid ? 'yes' : 'no'}`);
+  console.log(`  chain:      ${result.chain_id}`);
+  console.log(`  events:     ${result.event_count}`);
+  console.log(`  last hash:  ${result.last_event_hash ?? '(none)'}`);
+  if (result.issues.length > 0) {
+    console.log('');
+    console.log('Issues:');
+    for (const issue of result.issues) {
+      const location = issue.sequence_id === null ? 'chain' : `#${issue.sequence_id}`;
+      console.log(`  - ${location} ${issue.code}: ${issue.message}`);
+    }
+  }
 }
 
 function formatList(values: readonly string[]): string {
